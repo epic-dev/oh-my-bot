@@ -1,5 +1,6 @@
 import logging
 import multiprocessing
+import queue
 import threading
 
 from llm_client import build_messages
@@ -40,9 +41,10 @@ def run_llm_call(connector, messages: list[dict], timeout: int) -> str:
         process.terminate()
         process.join()
         return "Sorry, that took too long. Please try again."
-    if result_queue.empty():
+    try:
+        status, payload = result_queue.get(timeout=1)
+    except queue.Empty:
         return "Sorry, I couldn't reach the AI service. Please try again shortly."
-    status, payload = result_queue.get()
     if status == "error":
         logger.error("LLM call failed: %s", payload)
         return "Sorry, I couldn't reach the AI service. Please try again shortly."
@@ -51,17 +53,21 @@ def run_llm_call(connector, messages: list[dict], timeout: int) -> str:
 
 def handle_update(update, config, connector, chat_locks, telegram_token):
     # Processes one Telegram update end-to-end: serialize per chat, call the LLM, send the reply.
+    # The whole pipeline (chat_id/text extraction through the final send_message) is guarded so
+    # no unexpected exception ever escapes this function.
     message = update.get("message")
     if not message or "text" not in message:
         return
-    chat_id = message["chat"]["id"]
-    text = message["text"]
-    lock = chat_locks.get(chat_id)
-    with lock:
-        try:
+    chat_id = None
+    try:
+        chat_id = message["chat"]["id"]
+        text = message["text"]
+        lock = chat_locks.get(chat_id)
+        with lock:
             messages = build_messages(chat_id, text)
             reply = run_llm_call(connector, messages, config.llm_timeout_seconds)
-        except Exception:
-            logger.exception("Unexpected error handling update for chat %s", chat_id)
-            reply = "Sorry, something went wrong. Please try again."
-        send_message(telegram_token, chat_id, reply)
+            send_message(telegram_token, chat_id, reply)
+    except Exception:
+        logger.exception("Unexpected error handling update for chat %s", chat_id)
+        if chat_id is not None:
+            send_message(telegram_token, chat_id, "Sorry, something went wrong. Please try again.")
