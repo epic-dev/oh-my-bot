@@ -33,18 +33,22 @@ def _llm_call_target(connector, messages, result_queue):
 
 def run_llm_call(connector, messages: list[dict], timeout: int) -> str:
     # Runs connector.complete in its own process; kills it and returns an error string on timeout.
+    # Drains the result queue *before* joining: for large replies the child can block writing to a
+    # full pipe until the parent reads it, so joining first would time out and kill an already-
+    # successful child.
     result_queue = multiprocessing.Queue()
     process = multiprocessing.Process(target=_llm_call_target, args=(connector, messages, result_queue))
     process.start()
-    process.join(timeout)
-    if process.is_alive():
-        process.terminate()
-        process.join()
-        return "Sorry, that took too long. Please try again."
     try:
-        status, payload = result_queue.get(timeout=1)
+        status, payload = result_queue.get(timeout=timeout)
     except queue.Empty:
-        return "Sorry, I couldn't reach the AI service. Please try again shortly."
+        process.terminate()
+        process.join(5)
+        if process.is_alive():
+            process.kill()
+            process.join()
+        return "Sorry, that took too long. Please try again."
+    process.join()
     if status == "error":
         logger.error("LLM call failed: %s", payload)
         return "Sorry, I couldn't reach the AI service. Please try again shortly."
