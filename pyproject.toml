@@ -1,0 +1,19 @@
+[project]
+name = "oh-my-bot"
+version = "0.1.0"
+description = "Add your description here"
+authors = [
+    { name = "Pavel Yuruts", email = "pavel.yuruts@gmail.com" }
+]
+requires-python = ">=3.9"
+dependencies = [
+    "python-dotenv>=1.2.1",
+    "requests>=2.32.5",
+]
+
+[project.scripts]
+oh-my-bot = "oh_my_bot:main"
+
+[build-system]
+requires = ["uv_build>=0.12.5,<0.13.0"]
+build-backend = "uv_build"
