@@ -41,33 +41,44 @@ All config comes from environment variables, loaded from a gitignored
 
 ## Dependencies
 
-Managed via `uv` (`uv add <package>`, `uv run main.py`). Expected:
+Managed via `uv` (`uv add <package>`, `uv run oh-my-bot`). Expected:
 `requests`, `python-dotenv`. No Telegram or LLM SDK.
 
 ## Project layout
 
+Standard Python `src`-layout, packaged as an installable app with a console
+entry point (`uv_build` backend):
+
 ```
 oh-my-bot/
 ├── .env                  # gitignored, already present
-├── pyproject.toml        # created by `uv init` / `uv add`
-├── config.py
-├── telegram_client.py
-├── llm_client.py
-├── worker.py
-├── main.py
+├── pyproject.toml        # package config + `oh-my-bot` console script
+└── src/
+    └── oh_my_bot/
+        ├── __init__.py
+        ├── config.py
+        ├── telegram_client.py
+        ├── llm_client.py
+        ├── worker.py
+        └── main.py
 ```
+
+Run via `uv run oh-my-bot` (the console script, from `[project.scripts]`)
+or equivalently `uv run python -m oh_my_bot.main`. Modules within the
+package import each other with relative imports (e.g. `from .config import
+load_config`).
 
 Every function/method gets a one-line comment above it describing what it
 does (not what each line does — just its purpose).
 
 ## Components
 
-### `config.py`
+### `src/oh_my_bot/config.py`
 Loads and validates the environment variables listed above (via
 `python-dotenv` + `os.environ`) into a small `Config` object/namedtuple.
 Raises a clear error at startup if `TELEGRAM_BOT_TOKEN` is missing.
 
-### `telegram_client.py`
+### `src/oh_my_bot/telegram_client.py`
 Raw HTTP calls to `https://api.telegram.org/bot<token>/...`.
 
 - `get_updates(offset)` — long-polls Telegram for new updates starting
@@ -76,7 +87,7 @@ Raw HTTP calls to `https://api.telegram.org/bot<token>/...`.
 - `send_message(chat_id, text)` — sends a text reply to a chat. Failures
   are caught, logged, and swallowed (nothing else to do if send fails).
 
-### `llm_client.py`
+### `src/oh_my_bot/llm_client.py`
 - `LLMConnector` (ABC) — defines `complete(messages) -> str`, the one
   method any backend must implement.
 - `OpenAICompatConnector(LLMConnector)` — implements `complete` by
@@ -88,7 +99,7 @@ Raw HTTP calls to `https://api.telegram.org/bot<token>/...`.
   `complete`. Currently always `[{"role": "user", "content": text}]`;
   this is the single seam where a future history/memory store plugs in.
 
-### `worker.py`
+### `src/oh_my_bot/worker.py`
 The concurrency core.
 
 - `ChatLocks` — a small helper holding one `threading.Lock` per
@@ -106,7 +117,7 @@ The concurrency core.
   release the lock. Any unexpected exception is caught, logged, and
   turned into a generic error reply so it never kills the worker thread.
 
-### `main.py`
+### `src/oh_my_bot/main.py`
 - `main()` — loads config, constructs the connector, creates the
   `ThreadPoolExecutor(MAX_WORKERS)`, then loops forever: poll
   `get_updates(offset)`, submit each update to the pool via

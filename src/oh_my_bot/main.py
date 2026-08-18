@@ -2,10 +2,10 @@ import logging
 import time
 from concurrent.futures import ThreadPoolExecutor
 
-from config import load_config
-from llm_client import OpenAICompatConnector
-from telegram_client import _redact, get_updates
-from worker import ChatLocks, handle_update
+from .config import load_config
+from .llm_client import OpenAICompatConnector
+from .telegram_client import _redact, get_updates
+from .worker import ChatLocks, handle_update
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)

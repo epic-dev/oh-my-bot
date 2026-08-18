@@ -3,8 +3,8 @@ import multiprocessing
 import queue
 import threading
 
-from llm_client import build_messages
-from telegram_client import send_message
+from .llm_client import build_messages
+from .telegram_client import send_message
 
 logger = logging.getLogger(__name__)
 
