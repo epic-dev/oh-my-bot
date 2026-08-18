@@ -4,7 +4,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 from config import load_config
 from llm_client import OpenAICompatConnector
-from telegram_client import get_updates
+from telegram_client import _redact, get_updates
 from worker import ChatLocks, handle_update
 
 logging.basicConfig(level=logging.INFO)
@@ -24,8 +24,12 @@ def main():
             try:
                 updates = get_updates(config.telegram_bot_token, offset, config.poll_timeout_seconds)
                 backoff = 1
-            except Exception:
-                logger.exception("Failed to poll Telegram, retrying in %ss", backoff)
+            except Exception as exc:
+                logger.error(
+                    "Failed to poll Telegram, retrying in %ss: %s",
+                    backoff,
+                    _redact(config.telegram_bot_token, str(exc)),
+                )
                 time.sleep(backoff)
                 backoff = min(backoff * 2, 60)
                 continue
