@@ -1,7 +1,7 @@
 [project]
 name = "oh-my-bot"
 version = "0.1.0"
-description = "Add your description here"
+description = "Telegram bot that forwards messages to a local LLM."
 authors = [
     { name = "Pavel Yuruts", email = "pavel.yuruts@gmail.com" }
 ]
