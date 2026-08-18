@@ -70,4 +70,7 @@ def handle_update(update, config, connector, chat_locks, telegram_token):
     except Exception:
         logger.exception("Unexpected error handling update for chat %s", chat_id)
         if chat_id is not None:
-            send_message(telegram_token, chat_id, "Sorry, something went wrong. Please try again.")
+            try:
+                send_message(telegram_token, chat_id, "Sorry, something went wrong. Please try again.")
+            except Exception:
+                logger.exception("Failed to send fallback error reply to chat %s", chat_id)
