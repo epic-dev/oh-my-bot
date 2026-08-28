@@ -8,6 +8,12 @@ from dotenv import load_dotenv
 # is why it is a setting and not a constant in the connector.
 DEFAULT_REASONING_TAGS = ("think", "thinking", "reasoning", "thought", "reflection", "scratchpad")
 
+# End-of-turn markers from the common chat templates (ChatML/Qwen, GPT-style, Llama 3, Gemma).
+# They are sent to the server as stop sequences and, if one still shows up in the reply, the text
+# is truncated there — everything after an end-of-turn marker belongs to a turn the model
+# hallucinated, not to its answer.
+DEFAULT_STOP_SEQUENCES = ("<|im_end|>", "<|endoftext|>", "<|eot_id|>", "<end_of_turn>")
+
 
 @dataclass(frozen=True)
 class Config:
@@ -16,6 +22,7 @@ class Config:
     llm_base_url: str
     llm_model: str
     reasoning_tags: tuple
+    stop_sequences: tuple
     max_workers: int
     llm_timeout_seconds: int
     poll_timeout_seconds: int
@@ -39,6 +46,15 @@ def _parse_reasoning_tags(raw) -> tuple:
     if raw is None:
         return DEFAULT_REASONING_TAGS
     return tuple(tag.strip().lower() for tag in raw.split(",") if tag.strip())
+
+
+def _parse_stop_sequences(raw) -> tuple:
+    # Parses the comma-separated STOP_SEQUENCES value. An explicitly empty value disables stop
+    # handling; an unset value keeps the built-in defaults. Case is preserved: these are literal
+    # tokenizer strings, not tag names.
+    if raw is None:
+        return DEFAULT_STOP_SEQUENCES
+    return tuple(seq.strip() for seq in raw.split(",") if seq.strip())
 
 
 def _parse_user_ids(raw: str) -> frozenset:
@@ -66,6 +82,7 @@ def load_config() -> Config:
         llm_base_url=os.environ.get("LLM_BASE_URL", "http://localhost:8080/v1"),
         llm_model=os.environ.get("LLM_MODEL", "qwen3:1.7b"),
         reasoning_tags=_parse_reasoning_tags(os.environ.get("REASONING_TAGS")),
+        stop_sequences=_parse_stop_sequences(os.environ.get("STOP_SEQUENCES")),
         max_workers=int(os.environ.get("MAX_WORKERS", "4")),
         llm_timeout_seconds=int(os.environ.get("LLM_TIMEOUT_SECONDS", "60")),
         poll_timeout_seconds=int(os.environ.get("POLL_TIMEOUT_SECONDS", "30")),

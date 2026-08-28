@@ -34,6 +34,7 @@ MAX_WORKERS=4
 LLM_TIMEOUT_SECONDS=60
 POLL_TIMEOUT_SECONDS=30
 REASONING_TAGS=think,thinking,reasoning,thought,reflection,scratchpad
+STOP_SEQUENCES=<|im_end|>,<|endoftext|>,<|eot_id|>,<end_of_turn>
 ```
 
 ### 3. Start a local LLM server
@@ -179,6 +180,24 @@ REASONING_TAGS=                       # strip nothing
 ```
 
 Set it to an empty value if you ever want to see the raw reasoning while debugging.
+
+### End-of-turn markers
+
+Chat templates delimit turns with special tokens — `<|im_end|>` for ChatML/Qwen, `<|eot_id|>` for
+Llama 3, `<end_of_turn>` for Gemma. The tokenizer should stop there and never show them to you. If
+one appears in a reply, the server failed to stop, and whatever follows it is usually a *fabricated
+next turn* rather than part of the answer.
+
+The bot handles this twice over: it sends `STOP_SEQUENCES` to the server as the `stop` parameter,
+and if a marker still comes back it truncates the reply at that point.
+
+```bash
+STOP_SEQUENCES=<|im_end|>       # only this marker
+STOP_SEQUENCES=                 # disable truncation
+```
+
+Leaked `<|...|>` control tokens are always removed from replies regardless of this setting — they
+are never legitimate answer text. The unmodified response is still recorded in the `traces` table.
 
 ### Switching backends entirely (MLX ↔ Ollama ↔ vLLM)
 
