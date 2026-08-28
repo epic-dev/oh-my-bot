@@ -848,7 +848,9 @@ git commit -m "feat: add tool-calling connector with text-fallback parsing"
 ### Task 6: `tools/` registry and workspace-scoped file tools
 
 **Files:**
-- Create: `src/oh_my_bot/tools/__init__.py`, `src/oh_my_bot/tools/files.py`
+- Create: `src/oh_my_bot/tools/base.py`, `src/oh_my_bot/tools/__init__.py`, `src/oh_my_bot/tools/files.py`
+
+`ToolError` and `ToolContext` live in `base.py`, not `files.py`: `exec.py` (Task 7) and `skill.py` (Task 16) both need `ToolError`, and importing it from `files` would be odd. It also keeps `tools/__init__.py` importable by the submodules without a cycle.
 
 **Interfaces:**
 - Produces: `ToolError` (exception), `ToolContext` (`session`, `config`), `TOOL_SCHEMAS` (list of OpenAI function schemas), `dispatch(tool_call, ctx) -> (output: str, ok: bool)`, and `read_file` / `write_file`. Consumed by `agent.py` (Task 10). `exec` is registered in Task 7 and `skill` in Task 16.
@@ -901,7 +903,7 @@ def write_file(ctx, path: str, content: str) -> str:
 
 - [ ] **Step 2: Write `src/oh_my_bot/tools/__init__.py`**
 
-A `ToolContext` dataclass (`session`, `config`, plus `approvals` and `telegram` added in Task 8), a `TOOL_SCHEMAS` list holding the OpenAI function schema for each tool, a `_HANDLERS` name→callable map, and:
+A `TOOL_SCHEMAS` list holding the OpenAI function schema for each tool, a `_HANDLERS` name→callable map, and:
 
 ```python
 def dispatch(tool_call, ctx):
