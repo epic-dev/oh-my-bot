@@ -206,9 +206,12 @@ every time, and shell exports do not survive.
   pattern.
 - Output truncated to `EXEC_MAX_OUTPUT_BYTES` with an explicit marker so the
   model knows it was cut. *(stdout/stderr merged or separate is open, Q5.)*
-- The child's environment is **scrubbed** of `TELEGRAM_BOT_TOKEN` and any
-  other secret from `.env`. Without this, one `cat .env` prints the bot
-  token into a chat.
+- The child's environment is **scrubbed** of `TELEGRAM_BOT_TOKEN`, every other
+  key defined in `.env`, and anything whose name looks like a credential.
+  Without this, one `env` prints the bot token into a chat. Note the limit of
+  this control: `cat .env` still reads the file off disk, because `exec` is
+  unrestricted by design. Secrets on disk are protected by the approval gate,
+  not by scrubbing.
 - Every call is approval-gated (below).
 
 ### `tools/files.py`
