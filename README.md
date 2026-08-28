@@ -1,6 +1,10 @@
 # oh-my-bot
 
-A tiny Telegram bot that forwards messages to a local LLM and replies with the answer. No SDKs — raw HTTP to both Telegram and the LLM. The LLM connector speaks the OpenAI-compatible chat-completions API, so it works with MLX, Ollama, or vLLM by changing config only, never code.
+A Telegram bot that is an AI agent for your own machine. It runs a model/tool loop until the model has an answer: it can execute shell commands (with your per-command approval), read and write files in a per-conversation workspace, and follow skills you write as Markdown. Conversations persist in SQLite and compact themselves when they outgrow the context window.
+
+No SDKs — raw HTTP to both Telegram and the LLM. The connector speaks the OpenAI-compatible chat-completions API, so it works with MLX, Ollama, or vLLM by changing config only, never code.
+
+**It runs commands on the host, unsandboxed, by design.** The trust boundary is a Telegram user allowlist plus confirmation of every command before it runs. Read "Security model" below before pointing it at anything you care about.
 
 ## Prerequisites
 
@@ -23,7 +27,14 @@ Create a `.env` file in the project root (already gitignored):
 
 ```bash
 TELEGRAM_BOT_TOKEN=your-token-from-botfather
+ALLOWED_USER_IDS=123456789
 ```
+
+Both are required and the bot refuses to start without them. `ALLOWED_USER_IDS` is a
+comma-separated list of numeric Telegram **user** ids — message
+[@userinfobot](https://t.me/userinfobot) to find yours. It is the user id, not a chat id:
+in a group those differ, and a chat-id allowlist would authorise every member of that group.
+Everyone else is ignored in silence.
 
 Optional overrides (defaults shown):
 
@@ -38,6 +49,15 @@ STOP_SEQUENCES=<|im_end|>,<|endoftext|>,<|eot_id|>,<end_of_turn>
 LLM_MAX_TOKENS=2048
 LLM_CONTEXT_TOKENS=16384
 COMPACT_THRESHOLD_PCT=75
+DB_PATH=./oh-my-bot.db
+WORKSPACE_ROOT=./workspaces
+SKILLS_DIR=./skills
+MAX_LOOP_ITERATIONS=5
+MAX_LLM_RETRIES=3
+MAX_CONSECUTIVE_TOOL_FAILURES=3
+EXEC_TIMEOUT_SECONDS=30
+EXEC_MAX_OUTPUT_BYTES=8192
+APPROVAL_TIMEOUT_SECONDS=600
 ```
 
 ### 3. Start a local LLM server
@@ -255,30 +275,93 @@ See "Start a local LLM server" above for each backend's setup. Switching is just
 
 ## How it works
 
+Each message runs as one **turn**: the model is called with the available tools, any tool calls it
+makes are executed and their results fed back, and the loop repeats until it produces an answer.
+
+```
+Telegram ──poll──▶ main.py (router)
+                     ├── button tap ──▶ approvals.py ──wakes──▶ the blocked actor
+                     └── message ─────▶ actors.py (one thread per chat)
+                                            └─▶ agent.py: the loop
+                                                  ├─▶ context.py   compact if needed
+                                                  ├─▶ llm_client.py ──▶ worker.py (killable subprocess)
+                                                  ├─▶ tools/  exec | read_file | write_file | skill
+                                                  └─▶ store.py     history + traces
+```
+
 ```
 oh-my-bot/
-├── .env                  # gitignored
-├── pyproject.toml
-├── README.md
-└── src/
-    └── oh_my_bot/
-        ├── __init__.py
-        ├── config.py
-        ├── telegram_client.py
-        ├── llm_client.py
-        ├── worker.py
-        └── main.py
+├── .env                    # gitignored
+├── oh-my-bot.db            # gitignored: sessions, history, approvals, traces
+├── skills/<name>/SKILL.md  # your skills
+├── workspaces/<chat>/<session>/   # gitignored: where file tools and exec run
+└── src/oh_my_bot/
+    ├── config.py  session.py  store.py  actors.py  agent.py
+    ├── approvals.py  context.py  skills.py
+    ├── llm_client.py  telegram_client.py  worker.py  main.py
+    └── tools/  base.py  exec.py  files.py  skill.py
 ```
 
 | File | Responsibility |
 |---|---|
-| `src/oh_my_bot/config.py` | Loads and validates settings from `.env` |
-| `src/oh_my_bot/telegram_client.py` | Raw HTTP calls to the Telegram Bot API |
-| `src/oh_my_bot/llm_client.py` | OpenAI-compatible LLM connector |
-| `src/oh_my_bot/worker.py` | Thread pool, per-chat message ordering, and running each LLM call in its own killable subprocess |
-| `src/oh_my_bot/main.py` | The long-poll loop wiring everything together |
+| `config.py` | Settings from `.env`, and a startup check that the token budgets are consistent |
+| `main.py` | Long-poll loop and router: taps to approvals, messages to actors |
+| `actors.py` | One long-lived thread and queue per chat |
+| `agent.py` | The loop and its three circuit breakers |
+| `approvals.py` | Inline-keyboard confirmation, always-allow patterns, timeouts |
+| `tools/` | The tool registry, `exec`, the workspace-scoped file tools, and `skill` |
+| `context.py` | Token estimation and three-tier compaction |
+| `skills.py` | `SKILL.md` discovery and frontmatter parsing |
+| `session.py` | Per-chat sessions, history, `/new` and the other commands |
+| `store.py` | SQLite: sessions, messages, approvals, token ratios, traces |
+| `llm_client.py` | The OpenAI-compatible connector and reply cleaning |
+| `worker.py` | Runs one LLM call in its own killable subprocess |
+| `telegram_client.py` | Raw HTTP to the Telegram Bot API |
 
-Each LLM call runs in its own OS process so a hung or slow request can be killed on timeout without affecting other users — it doesn't just get abandoned like a stuck thread would.
+**Why one thread per chat rather than a thread pool.** A turn blocks while it waits for you to tap
+Allow, and that wait is unbounded. Under a pool, a pending approval would hold a worker slot for as
+long as you took to answer. Each chat now owns its thread, so a chat waiting on you delays only
+itself. Messages that arrive mid-turn queue and run in order.
+
+**Why each LLM call still gets its own process.** A hung or slow request can be killed on timeout
+rather than abandoned like a stuck thread. `exec` gets the same treatment, in its own process group,
+so a timeout also kills anything the command spawned.
+
+**Circuit breakers.** Three independent budgets stop a turn that is going nowhere, each with its own
+message so a dead turn explains itself: `MAX_LOOP_ITERATIONS` model→tool rounds,
+`MAX_LLM_RETRIES` transport failures, and `MAX_CONSECUTIVE_TOOL_FAILURES` same-tool errors in a row.
+Transport retries do not consume loop iterations — a flaky server should not eat your reasoning
+steps. Partial work stays in the history, so a follow-up message continues from where it stopped.
+
+## Security model
+
+`exec` runs commands on this machine as you, with no sandbox. That is deliberate — it is what makes
+the bot useful — so the boundary is elsewhere:
+
+- **Only allowlisted Telegram user ids are answered at all**, and only in private chats. Button taps
+  are checked against the same allowlist, or anyone could approve your pending command by guessing
+  its request id.
+- **Every `exec` command is confirmed before it runs**, with Allow / Deny / Always-allow-*program*.
+  "Always allow `ls`" permits any later `ls`, never `rm`. `/auto` suspends confirmation until
+  `/new`. An unanswered request auto-denies after `APPROVAL_TIMEOUT_SECONDS`.
+- **`read_file` and `write_file` are never confirmed**, so they are code-enforced to the session
+  workspace — every path is resolved, symlinks included, and anything outside is refused. This is
+  what stops the unconfirmed tools being an easier route around the gate.
+- **Secrets are stripped from the environment** of every command: keys defined in `.env`, plus
+  anything whose name looks like a credential. The limit of this control is worth knowing: `cat .env`
+  still reads the file off disk. Secrets on disk are protected by the approval gate, not by
+  scrubbing — so think before approving a command that reads them, or keep `.env` elsewhere.
+
+## Commands
+
+| Command | Effect |
+|---|---|
+| `/new` | Fresh session: new context, new empty workspace, confirmations back on. The old workspace is archived, not deleted |
+| `/status` | Session id, message count, auto-approve state, workspace path |
+| `/auto` | Stop confirming commands until `/new` |
+| `/compact` | Force a compaction pass now |
+| `/skills` | List installed skills |
+| `/skill <name>` | Load a skill into the conversation directly |
 
 ## Skills
 
@@ -356,6 +439,18 @@ sqlite3 oh-my-bot.db "DELETE FROM traces WHERE created_at < strftime('%s','now',
 
 ## Known limitations
 
-- Conversation history is kept per chat in SQLite and survives restarts; `/new` starts a fresh session. Only allowlisted Telegram user ids (`ALLOWED_USER_IDS`) may use the bot, and only in private chats.
-- A burst of more than `MAX_WORKERS` messages from one chat can briefly delay replies to other chats (the per-chat lock holds a thread-pool slot for the LLM call's full duration).
-- `mlx_lm.server` is not recommended for production use as-is (per its own startup warning) — fine for personal/local use.
+- **`exec` is unsandboxed by design.** The allowlist and per-command approval are the only
+  boundary. Approving a destructive command runs it.
+- **Private chats only.** Group chats are dropped; a host-unrestricted agent in a group is a much
+  larger trust surface.
+- **A turn in flight is abandoned on restart.** Sessions and history persist, but a turn that was
+  mid-tool when the process died is not resumed.
+- **Small models choose tools poorly.** Qwen3-1.7B calls a tool named after a skill rather than
+  calling `skill` with that name (handled), and may ignore tools entirely. `/skill <name>` is the
+  override. Progressive disclosure is more reliable on bigger models.
+- **Reasoning is expensive at small sizes.** Qwen3 can spend 500+ tokens thinking before answering.
+  Appending `/no_think` to a message skips it.
+- **No streaming.** Progress is reported per tool call, not per token.
+- **Traces are never pruned** — see Debugging for the cleanup query.
+- **`mlx_lm.server` is not recommended for production** (per its own startup warning) — fine for
+  personal/local use.

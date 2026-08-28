@@ -12,9 +12,9 @@ The current app answers each message independently in one LLM call. This
 spec replaces that single call with a bounded loop, and replaces the
 stateless `build_messages()` seam with a persisted session.
 
-Assumed backend for now: Ollama at `http://localhost:11434/v1` running
-`qwen3:1.7b`. Everything here must still work against MLX and vLLM by
-config change only — but the small-model assumption drives several
+Backend as built and tested: `mlx_lm.server` running
+`mlx-community/Qwen3-1.7B-4bit`. Everything here still works against Ollama and
+vLLM by config change only — but the small-model assumption drives several
 decisions below (see Design notes).
 
 ## Non-functional requirements
@@ -57,10 +57,10 @@ the first.
 This invariant is what makes "confirm exec only" safe — if `write_file`
 can escape the workspace, the confirmation gate is decorative.
 
-**Ollama defaults `num_ctx` to 4096** regardless of the model's advertised
-window. `LLM_CONTEXT_TOKENS` must describe the *server's* configured
-window, not the model's theoretical maximum, or compaction will trigger
-far too late.
+**The context window is a property of the model, not the backend.** Qwen3 is
+40,960 tokens; TinyLlama is 2,048; Ollama additionally caps `num_ctx` at 4096
+by default. `LLM_CONTEXT_TOKENS` must describe whichever is smaller — and on
+Apple Silicon the practical ceiling is KV-cache memory rather than either.
 
 ## Configuration
 
@@ -75,14 +75,14 @@ Existing variables are unchanged except where noted. New ones:
 | `MAX_LOOP_ITERATIONS` | no | `5` | Model→tool rounds per user message before the breaker trips |
 | `MAX_LLM_RETRIES` | no | `3` | Transport-level retries of a failed LLM call |
 | `MAX_CONSECUTIVE_TOOL_FAILURES` | no | `3` | Same-tool failures in a row before the breaker trips |
-| `EXEC_TIMEOUT_SECONDS` | no | `30` | Per-command wall clock before the child is killed *(open, see Q5)* |
-| `EXEC_MAX_OUTPUT_BYTES` | no | `8192` | Truncation cap on captured output *(open, see Q5)* |
+| `EXEC_TIMEOUT_SECONDS` | no | `30` | Per-command wall clock before the child is killed  |
+| `EXEC_MAX_OUTPUT_BYTES` | no | `8192` | Truncation cap on captured output  |
 | `APPROVAL_TIMEOUT_SECONDS` | no | `600` | How long a pending approval waits before auto-denying |
 | `LLM_CONTEXT_TOKENS` | no | `4096` | The **server's** configured context window |
 | `LLM_MAX_TOKENS` | no | `2048` | Generation budget per reply; `0` defers to the server. Servers default this low (mlx_lm.server: 512), which a reasoning model spends entirely on thinking |
 | `REASONING_TAGS` | no | `think,thinking,reasoning,thought,reflection,scratchpad` | Tags whose contents are stripped from replies; empty disables stripping |
 | `STOP_SEQUENCES` | no | `<\|im_end\|>,<\|endoftext\|>,<\|eot_id\|>,<end_of_turn>` | End-of-turn markers sent to the server and truncated on; empty disables truncation |
-| `COMPACT_THRESHOLD_PCT` | no | `75` | Percent of the window that triggers compaction *(open, see Q6)* |
+| `COMPACT_THRESHOLD_PCT` | no | `75` | Percent of the window that triggers compaction  |
 
 `MAX_WORKERS` changes meaning: it no longer bounds concurrent messages, it
 bounds concurrent **chat actors**. Given the allowlist is small, this is
@@ -137,8 +137,7 @@ comment above every function describing its purpose.
 
 The poll loop stops dispatching to a thread pool and becomes a router:
 
-- Reject any update whose `from.id` is not in `ALLOWED_USER_IDS` *(behavior
-  on rejection is open, see Q2)*.
+- Reject any update whose `from.id` is not in `ALLOWED_USER_IDS` (silently).
 - `message` updates → append to that chat's actor queue.
 - `callback_query` updates → hand to `approvals.resolve()` for that chat.
   These already arrive from `getUpdates` by default; the current code drops
@@ -156,7 +155,8 @@ only its own chat. This is the reason the thread pool had to go: under the
 old model a pending approval would hold a pool slot for as long as the user
 took to tap a button.
 
-*Idle-actor reaping is open (see Q8).*
+Actor threads live for the process lifetime; there is no idle reaping. The allowlist is a
+handful of people, so a reaper would be complexity with no payoff.
 
 ### `agent.py` — the loop
 
@@ -191,8 +191,10 @@ Tool calls are read from the response's native `tool_calls` field. When
 that field is absent but the content contains a fenced tool-call block,
 the block is parsed instead. This covers both a backend that ignores the
 `tools` parameter and — more commonly at this model size — a backend that
-accepts it while the model answers in prose anyway. *Detection strategy is
-open (see Q4).*
+accepts it while the model answers in prose anyway. Detection is
+opportunistic: `tools` is always sent, and the text fallback runs only when no
+native calls come back. `mlx_lm.server` does return native `tool_calls`, so the
+fallback is a safety net rather than the primary path.
 
 A response that is neither a clean tool call nor parseable text is treated
 as a tool failure and counts against `MAX_CONSECUTIVE_TOOL_FAILURES`.
@@ -206,7 +208,7 @@ every time, and shell exports do not survive.
 - Killable and timeout-bounded, reusing `worker.py`'s existing child-process
   pattern.
 - Output truncated to `EXEC_MAX_OUTPUT_BYTES` with an explicit marker so the
-  model knows it was cut. *(stdout/stderr merged or separate is open, Q5.)*
+  model knows it was cut. stderr is merged into stdout: one stream is simpler for the model to read.
 - The child's environment is **scrubbed** of `TELEGRAM_BOT_TOKEN`, every other
   key defined in `.env`, and anything whose name looks like a credential.
   Without this, one `env` prints the bot token into a chat. Note the limit of
@@ -241,7 +243,7 @@ Every `exec` call sends the command to the chat with an inline keyboard:
 - **Approval timeout** — after `APPROVAL_TIMEOUT_SECONDS` with no tap, the
   request is auto-denied, the chat is told the turn expired, and the actor
   is freed. Without this a forgotten prompt pins a chat forever.
-- **Deny** — *semantics open (see Q1)*.
+- **Deny** — returns the reason to the model.
 
 ### `session.py` and `store.py`
 
@@ -291,8 +293,9 @@ stored per model so it survives restarts and re-learns on `LLM_MODEL` change.
 
 Separately and always: every tool result is capped on the way *in* (see
 `EXEC_MAX_OUTPUT_BYTES`). That cap alone removes most of the pressure; the
-tiers above handle what is left. *(Whether compaction may run mid-loop or
-only between turns is open, see Q6.)*
+tiers above handle what is left. Compaction runs before every model call,
+including mid-loop, and compacts to below the trigger rather than to it — landing
+exactly on the budget would make every subsequent turn re-compact.
 
 ### `skills.py` and `tools/skill.py`
 
@@ -311,7 +314,8 @@ description: Investigate disk usage and find large files.
 <instructions the model follows>
 ```
 
-*(Whether to also honor an `allowed-tools` key is open, see Q7.)*
+Unknown frontmatter keys are parsed and ignored, so an `allowed-tools` key can
+be honoured later without a format change.
 
 **Progressive disclosure:** only each skill's `name` and `description` go
 into the system prompt. A `skill(name)` tool loads the full body on demand
@@ -350,7 +354,7 @@ Extends the original table:
 
 | Failure | Behavior |
 |---|---|
-| Update from a non-allowlisted user | Rejected before any processing *(exact behavior open, Q2)* |
+| Update from a non-allowlisted user | Rejected before any processing (silently) |
 | Model emits an unparseable tool call | Counted as a tool failure; loop retries with the error appended |
 | Loop exceeds `MAX_LOOP_ITERATIONS` | Breaker message; partial work stays in history |
 | Tool fails `MAX_CONSECUTIVE_TOOL_FAILURES` times | Breaker message; turn ends |
@@ -376,25 +380,46 @@ Each phase leaves the bot working:
 Skills come last because they are the least useful until the loop is solid,
 and their success depends on a loop you already trust.
 
-## Open questions
+## Decisions (formerly open questions)
 
-1. **Deny semantics.** Does Deny abort the turn outright, or does the model
-   get "the user denied that command" and one more attempt at a different
-   approach (charged against the tool-failure budget)?
-2. **Non-allowlisted users.** Silent drop, or an explicit "not authorized"
-   reply? Silence leaks less about the bot's existence.
-3. **Group chats.** Supported at all, or DMs only? Determines whether the
-   actor keys on chat id or user id.
-4. **Native-tools detection.** Startup probe, config flag, or purely
-   opportunistic (parse text whenever `tool_calls` is absent)?
-5. **`exec` limits.** Final values for timeout and output cap, and whether
-   stderr is returned separately or merged into stdout.
-6. **Compaction trigger.** The threshold percentage, and whether compaction
-   may run mid-loop or only between user turns.
-7. **Skill frontmatter.** Mirror Claude Code's `name` / `description` /
-   `allowed-tools`, or keep just name and description?
-8. **Actor lifecycle.** Threads live for the process's lifetime, or are
-   reaped after an idle period?
+All eight questions this spec left open were resolved during implementation, along with several
+that only appeared once real code met a real model.
+
+| Question | Decision |
+|---|---|
+| Deny semantics | Deny returns the reason to the model as a tool result, charged to the tool-failure budget, so it can try another route while a model that keeps re-asking still trips the breaker |
+| Non-allowlisted users | Silent drop, logged |
+| Group chats | Private chats only; the actor keys on `chat_id` but non-private updates are dropped |
+| Native-tools detection | Opportunistic: always send `tools`, parse a fenced block only when no `tool_calls` come back. **`mlx_lm.server` does return native `tool_calls`**, so the fallback is a safety net |
+| `exec` limits | 30s timeout, 8 KiB output cap, stderr merged, own process group so a timeout kills spawned children too |
+| Compaction trigger | 75% of `LLM_CONTEXT_TOKENS`, checked before every model call including mid-loop |
+| Skill frontmatter | `name` and `description`; unknown keys parsed and ignored |
+| Actor lifecycle | Threads live for the process lifetime; no reaping |
+
+### Decisions that emerged during implementation
+
+- **`ToolError` and `ToolContext` live in `tools/base.py`**, not `files.py`, since `exec` and
+  `skill` both need them.
+- **Env scrubbing draws on three sources** — keys in `.env`, a hardcoded critical set (so it still
+  works when `.env` cannot be located), and a credential-shaped name pattern. It does **not**
+  protect secrets on disk; the approval gate does.
+- **Reply cleaning is model-agnostic and configurable**: `REASONING_TAGS` for chain-of-thought
+  blocks, `STOP_SEQUENCES` for end-of-turn markers. Text after an end-of-turn marker is truncated,
+  not merely stripped — it is a turn the model hallucinated.
+- **`LLM_MAX_TOKENS` is required in practice.** `mlx_lm.server` caps generation at 512 tokens, which
+  Qwen3 spends entirely on thinking, producing an empty reply.
+- **The three token settings interact** and `load_config` warns when they are inconsistent:
+  `LLM_CONTEXT_TOKENS × (1 − COMPACT_THRESHOLD_PCT/100) ≥ LLM_MAX_TOKENS`.
+- **Compaction compacts to below the trigger, not to it**, or every subsequent turn re-compacts.
+- **Tool calls are parsed from the *cleaned* content**, so a call the model only considered inside a
+  reasoning block is never executed.
+- **`dispatch` fails closed**: a context with no approval registry refuses to run a gated tool.
+- **A tool call named after a skill is treated as loading that skill.** Qwen3-1.7B does this
+  instead of calling `skill`; the alias is read-only and cannot do anything unsafe.
+- **The `skill` tool is advertised only when a skill exists.**
+- **`LLM_CONTEXT_TOKENS` is a per-model value.** The two models on the development machine differ by
+  20× (Qwen3: 40,960; TinyLlama: 2,048), and the practical ceiling is KV-cache RAM, not the
+  declared maximum.
 
 ## Testing (manual)
 

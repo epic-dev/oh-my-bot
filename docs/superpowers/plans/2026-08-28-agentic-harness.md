@@ -47,7 +47,7 @@ The bot becomes conversational. No loop, no tools, no new attack surface.
 **Interfaces:**
 - Produces: `Config` gains `allowed_user_ids: frozenset[int]`, `db_path`, `workspace_root`, `skills_dir`, `max_loop_iterations`, `max_llm_retries`, `max_consecutive_tool_failures`, `exec_timeout_seconds`, `exec_max_output_bytes`, `approval_timeout_seconds`, `llm_context_tokens`, `compact_threshold_pct`. Every later task reads from it.
 
-- [ ] **Step 1: Rewrite `src/oh_my_bot/config.py`**
+- [x] **Step 1: Rewrite `src/oh_my_bot/config.py`**
 
 ```python
 import os
@@ -121,7 +121,7 @@ def load_config() -> Config:
     )
 ```
 
-- [ ] **Step 2: Add your Telegram user id to `.env`**
+- [x] **Step 2: Add your Telegram user id to `.env`**
 
 Find your numeric user id by messaging [@userinfobot](https://t.me/userinfobot) on Telegram, then add to `.env`:
 
@@ -131,7 +131,7 @@ ALLOWED_USER_IDS=123456789
 
 Note this is your **user** id, not a chat id. Multiple ids are comma-separated.
 
-- [ ] **Step 3: Extend `.gitignore`**
+- [x] **Step 3: Extend `.gitignore`**
 
 Append:
 ```
@@ -143,7 +143,7 @@ workspaces/
 
 The two sidecar patterns matter: `store.py` runs in WAL mode, which creates `oh-my-bot.db-wal` and `oh-my-bot.db-shm` alongside the database, and `*.db` does not match either.
 
-- [ ] **Step 4: Verify config loads and rejects bad input**
+- [x] **Step 4: Verify config loads and rejects bad input**
 
 Run:
 ```bash
@@ -164,7 +164,7 @@ for bad in ('', '  ', 'abc', '1,notanum'):
 ```
 Expected: an `OK:` line with your id, then four `OK rejected` lines.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/oh_my_bot/config.py .gitignore
@@ -182,7 +182,7 @@ git commit -m "feat: add agent configuration and user allowlist"
 - Consumes: `Config` (Task 1).
 - Produces: `Store(db_path)` with `connect()`, `init_schema()`, `get_or_create_session(chat_id)`, `new_session(chat_id)`, `append_message(session_id, role, content, tool_calls, tool_call_id)`, `load_messages(session_id)`, `set_auto_approve(chat_id, on)`, `add_approval_pattern(session_id, pattern)`, `load_approval_patterns(session_id)`, `get_token_ratio(model)`, `set_token_ratio(model, ratio)`, `append_trace(session_id, request, response)`. Used by `session.py` (Task 3), `approvals.py` (Task 8), `context.py` (Task 13).
 
-- [ ] **Step 1: Write `src/oh_my_bot/store.py`**
+- [x] **Step 1: Write `src/oh_my_bot/store.py`**
 
 ```python
 import json
@@ -385,7 +385,7 @@ class Store:
         conn.commit()
 ```
 
-- [ ] **Step 2: Verify the store, including cross-thread use**
+- [x] **Step 2: Verify the store, including cross-thread use**
 
 Write to `$SCRATCH/verify_store.py` (use your scratch dir; delete it after):
 ```python
@@ -452,11 +452,11 @@ print("OK: 8 threads wrote concurrently with no sqlite thread errors")
 Run: `uv run python "$SCRATCH/verify_store.py"` (with `SCRATCH` set to your scratch dir)
 Expected: six `OK:` lines. The last one is the important one — it proves the thread-local connection strategy works under the actor model.
 
-- [ ] **Step 3: Delete the scratch files**
+- [x] **Step 3: Delete the scratch files**
 
 Run: `rm "$SCRATCH/verify_store.py" /tmp/oh-my-bot-verify.db*`
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add src/oh_my_bot/store.py
@@ -474,7 +474,7 @@ git commit -m "feat: add SQLite store for sessions, messages, approvals, and tra
 - Consumes: `Store` (Task 2), `Config` (Task 1).
 - Produces: `Session` (holding `chat_id`, `session_id`, `store`, `config`) with `history()`, `add_user(text)`, `add_assistant(content, tool_calls)`, `add_tool_result(tool_call_id, content)`, `workspace()`, and module-level `handle_command(text, session, ...) -> str | None`. Used by `agent.py` (Task 10) and `actors.py` (Task 9).
 
-- [ ] **Step 1: Write `src/oh_my_bot/session.py`**
+- [x] **Step 1: Write `src/oh_my_bot/session.py`**
 
 ```python
 import logging
@@ -576,7 +576,7 @@ def handle_command(text: str, session: Session) -> str:
 
 `/stop`, `/skills`, `/skill`, and `/compact` are added in later tasks; `handle_command` grows a branch each time.
 
-- [ ] **Step 2: Verify sessions, reset, and workspace isolation**
+- [x] **Step 2: Verify sessions, reset, and workspace isolation**
 
 Write to `$SCRATCH/verify_session.py`:
 ```python
@@ -626,11 +626,11 @@ print("OK: non-commands pass through")
 Run: `uv run python "$SCRATCH/verify_session.py"`
 Expected: four `OK:` lines. The archive assertion matters — it proves `/new` does not recursively delete.
 
-- [ ] **Step 3: Delete the scratch files**
+- [x] **Step 3: Delete the scratch files**
 
 Run: `rm "$SCRATCH/verify_session.py" /tmp/oh-my-bot-sess.db*; rm -rf /tmp/oh-my-bot-ws`
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add src/oh_my_bot/session.py
@@ -648,15 +648,15 @@ git commit -m "feat: add persistent sessions with /new, /auto, and /status"
 - Consumes: `Session`, `handle_command` (Task 3), `Store` (Task 2).
 - Produces: a conversational bot. `build_messages()` is deleted from `llm_client.py` — `Session.history()` replaces it. Still one LLM call per message, still the thread pool; Task 9 replaces the pool.
 
-- [ ] **Step 1: Delete `build_messages` from `src/oh_my_bot/llm_client.py`**
+- [x] **Step 1: Delete `build_messages` from `src/oh_my_bot/llm_client.py`**
 
 Remove the function entirely. `Session.history()` is now the seam the original spec reserved it for.
 
-- [ ] **Step 2: Update `handle_update` in `src/oh_my_bot/worker.py`**
+- [x] **Step 2: Update `handle_update` in `src/oh_my_bot/worker.py`**
 
 Replace the body of the `with lock:` block so it: constructs a `Session` for the chat, tries `handle_command` first (sending its reply and returning if it matched), otherwise appends the user message, calls `run_llm_call` with `session.history()`, persists the assistant reply with `session.add_assistant(reply)`, and sends it. `handle_update` gains a `store` parameter.
 
-- [ ] **Step 3: Update `main()` in `src/oh_my_bot/main.py`**
+- [x] **Step 3: Update `main()` in `src/oh_my_bot/main.py`**
 
 Construct `store = Store(config.db_path)` and call `store.init_schema()` before the loop, then pass `store` through to `handle_update`. Add the allowlist check before submitting an update:
 
@@ -668,13 +668,13 @@ Construct `store = Store(config.db_path)` and call `store.init_schema()` before 
                     continue
 ```
 
-- [ ] **Step 4: Verify the allowlist rejects and admits correctly**
+- [x] **Step 4: Verify the allowlist rejects and admits correctly**
 
 Write to `$SCRATCH/verify_allowlist.py` a small script that builds fake update dicts (an allowlisted private chat, a non-allowlisted user, an allowlisted user in a `"group"` chat, and an update with no `message` key) and asserts the filter expression admits only the first. Copy the exact condition from `main.py` so the test tracks the real code.
 
 Expected: `OK` with only the first update admitted.
 
-- [ ] **Step 5: Delete the scratch file, then verify end-to-end (manual, human required)**
+- [x] **Step 5: Delete the scratch file, then verify end-to-end (manual, human required)**
 
 Start your LLM server and run `uv run oh-my-bot`. From Telegram:
 - Send "my name is Pavel", then "what is my name?" — the second reply must show it remembered. This is the whole point of the phase.
@@ -682,7 +682,7 @@ Start your LLM server and run `uv run oh-my-bot`. From Telegram:
 - Send `/new`, then "what is my name?" — it must have forgotten.
 - Message from a non-allowlisted account (or temporarily remove your id from `ALLOWED_USER_IDS` and restart) — confirm no reply and a "Dropping update" log line.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/oh_my_bot/worker.py src/oh_my_bot/main.py src/oh_my_bot/llm_client.py
@@ -702,7 +702,7 @@ The bot becomes an agent. This phase introduces every security-relevant control 
 **Interfaces:**
 - Produces: `ToolCall` (`id`, `name`, `arguments: dict`, `to_wire()`), `AssistantMessage` (`content`, `tool_calls: list`, `usage: dict`), `parse_text_tool_calls(content) -> list`, and `complete(messages, tools=None) -> AssistantMessage`. `worker.run_llm_call` now returns `(status, AssistantMessage | error_str)` instead of a bare string. Consumed by `agent.py` (Task 10) and `context.py` (Task 13, via `usage`).
 
-- [ ] **Step 1: Rewrite `src/oh_my_bot/llm_client.py`**
+- [x] **Step 1: Rewrite `src/oh_my_bot/llm_client.py`**
 
 ```python
 import json
@@ -815,13 +815,13 @@ class OpenAICompatConnector(LLMConnector):
         return AssistantMessage(content=content, tool_calls=tool_calls, usage=data.get("usage") or {})
 ```
 
-- [ ] **Step 2: Update `run_llm_call` in `src/oh_my_bot/worker.py`**
+- [x] **Step 2: Update `run_llm_call` in `src/oh_my_bot/worker.py`**
 
 Change it to take a `tools` argument, pass it to `connector.complete`, and return the tuple `("ok", AssistantMessage)` / `("error", message)` / `("timeout", message)` rather than a user-facing string. `agent.py` (Task 10) turns those into user-facing text — the worker's job is only to make the call killable. Keep the existing drain-before-join ordering; the comment explaining why is still correct and still load-bearing.
 
 Update `handle_update`'s existing call site to use `.content` so Phase 1 keeps working.
 
-- [ ] **Step 3: Verify parsing of both call paths against a stub server**
+- [x] **Step 3: Verify parsing of both call paths against a stub server**
 
 Write to `$SCRATCH/verify_llm_client.py` a stub `HTTPServer` (same pattern as the original plan's Task 3) that returns, on successive requests:
 1. A native `tool_calls` response with `arguments` as a JSON **string**.
@@ -836,7 +836,7 @@ Assert: cases 1-3 each yield exactly one `ToolCall` with `arguments == {"command
 
 Expected: one `OK` line per case. Case 2 is the one that matters most in practice — it is what Ollama actually sends.
 
-- [ ] **Step 4: Delete the scratch file and commit**
+- [x] **Step 4: Delete the scratch file and commit**
 
 ```bash
 git add src/oh_my_bot/llm_client.py src/oh_my_bot/worker.py
@@ -855,7 +855,7 @@ git commit -m "feat: add tool-calling connector with text-fallback parsing"
 **Interfaces:**
 - Produces: `ToolError` (exception), `ToolContext` (`session`, `config`), `TOOL_SCHEMAS` (list of OpenAI function schemas), `dispatch(tool_call, ctx) -> (output: str, ok: bool)`, and `read_file` / `write_file`. Consumed by `agent.py` (Task 10). `exec` is registered in Task 7 and `skill` in Task 16.
 
-- [ ] **Step 1: Write `src/oh_my_bot/tools/files.py`**
+- [x] **Step 1: Write `src/oh_my_bot/tools/files.py`**
 
 ```python
 from pathlib import Path
@@ -901,7 +901,7 @@ def write_file(ctx, path: str, content: str) -> str:
     return f"Wrote {len(content)} characters to {target}"
 ```
 
-- [ ] **Step 2: Write `src/oh_my_bot/tools/__init__.py`**
+- [x] **Step 2: Write `src/oh_my_bot/tools/__init__.py`**
 
 A `TOOL_SCHEMAS` list holding the OpenAI function schema for each tool, a `_HANDLERS` name→callable map, and:
 
@@ -924,7 +924,7 @@ def dispatch(tool_call, ctx):
 
 The `TypeError` branch matters more than it looks: a 1.7B model routinely invents argument names, and this turns that into a tool result the model can learn from rather than a crashed turn.
 
-- [ ] **Step 3: Verify the workspace guard exhaustively**
+- [x] **Step 3: Verify the workspace guard exhaustively**
 
 Write to `$SCRATCH/verify_files.py` a script that builds a `ToolContext` over a temp workspace and asserts every one of these is refused with `ToolError`:
 
@@ -943,7 +943,7 @@ Finally assert nothing escaped for real: `assert not Path("/tmp/escape.txt").exi
 
 Expected: one `OK` line per case and a final `OK: nothing escaped the workspace`. **Do not proceed to Task 7 until every one of these passes** — Task 7 adds a tool that can run anything on this host, and this guard is what keeps the unconfirmed tools from being an easier path around it.
 
-- [ ] **Step 4: Delete the scratch files and commit**
+- [x] **Step 4: Delete the scratch files and commit**
 
 ```bash
 git add src/oh_my_bot/tools/
@@ -961,7 +961,7 @@ git commit -m "feat: add tool registry and workspace-scoped file tools"
 **Interfaces:**
 - Produces: `run_command(command, cwd, timeout, max_bytes) -> str` and the `exec` tool handler. The approval gate is added in Task 8; until then `exec` runs unconfirmed, so **do not run the bot against Telegram between Tasks 7 and 8** — verify with the scratch script only.
 
-- [ ] **Step 1: Write `src/oh_my_bot/tools/exec.py`**
+- [x] **Step 1: Write `src/oh_my_bot/tools/exec.py`**
 
 ```python
 import logging
@@ -1035,11 +1035,11 @@ def exec_tool(ctx, command: str) -> str:
     )
 ```
 
-- [ ] **Step 2: Register `exec` in `src/oh_my_bot/tools/__init__.py`**
+- [x] **Step 2: Register `exec` in `src/oh_my_bot/tools/__init__.py`**
 
 Add its schema — one required string parameter `command`, described as "A shell command to run. The working directory does not persist between calls; cd every time you need to." — and add `"exec": exec_tool` to `_HANDLERS`.
 
-- [ ] **Step 3: Verify execution, killing, truncation, and env scrubbing**
+- [x] **Step 3: Verify execution, killing, truncation, and env scrubbing**
 
 Write to `$SCRATCH/verify_exec.py` a script asserting:
 - `run_command("echo hi", ...)` returns `hi`.
@@ -1053,7 +1053,7 @@ Write to `$SCRATCH/verify_exec.py` a script asserting:
 
 Expected: one `OK` line per case. The env-scrubbing and orphan assertions are the two that would otherwise fail silently in production.
 
-- [ ] **Step 4: Delete the scratch file and commit**
+- [x] **Step 4: Delete the scratch file and commit**
 
 ```bash
 git add src/oh_my_bot/tools/
@@ -1071,7 +1071,7 @@ git commit -m "feat: add exec tool with scrubbed env, process-group kill, and ou
 **Interfaces:**
 - Produces: `send_message(..., reply_markup=None)`, `answer_callback_query(token, query_id, text)`, and `ApprovalRegistry` with `request(ctx, command) -> (allowed: bool, reason: str)` and `resolve(update) -> bool`. `main.py` (Task 11) routes `callback_query` updates into `resolve`; `dispatch` gates `exec` through `request`.
 
-- [ ] **Step 1: Extend `src/oh_my_bot/telegram_client.py`**
+- [x] **Step 1: Extend `src/oh_my_bot/telegram_client.py`**
 
 Add an optional `reply_markup` parameter to `send_message` / `_send_single_message` (included in the JSON body only when set, and only on the final chunk), and:
 
@@ -1086,7 +1086,7 @@ def answer_callback_query(token: str, query_id: str, text: str = "") -> None:
         logger.error("Failed to answer callback query: %s", _redact(token, str(exc)))
 ```
 
-- [ ] **Step 2: Write `src/oh_my_bot/approvals.py`**
+- [x] **Step 2: Write `src/oh_my_bot/approvals.py`**
 
 ```python
 import logging
@@ -1172,11 +1172,11 @@ class ApprovalRegistry:
         return True
 ```
 
-- [ ] **Step 3: Gate `exec` in `src/oh_my_bot/tools/__init__.py`**
+- [x] **Step 3: Gate `exec` in `src/oh_my_bot/tools/__init__.py`**
 
 In `dispatch`, before invoking the handler, if `tool_call.name == "exec"`, call `ctx.approvals.request(ctx, tool_call.arguments.get("command", ""))`. On denial return `("The user denied this command.", False)` — the `False` charges it to the tool-failure breaker, so a model that keeps re-asking is stopped, while a model that adapts gets a second route. Add `approvals` to `ToolContext`.
 
-- [ ] **Step 4: Verify the approval flow without Telegram**
+- [x] **Step 4: Verify the approval flow without Telegram**
 
 Write to `$SCRATCH/verify_approvals.py` a script that monkeypatches `approvals.send_message` and `approvals.answer_callback_query` to record calls instead of hitting the network, then asserts:
 - `command_pattern("ls -la /tmp")` is `"ls"`; `command_pattern("")` does not raise; `command_pattern("echo \"unclosed")` falls back to a split rather than raising on the `shlex` error.
@@ -1190,7 +1190,7 @@ Write to `$SCRATCH/verify_approvals.py` a script that monkeypatches `approvals.s
 
 Expected: one `OK` line per case.
 
-- [ ] **Step 5: Delete the scratch file and commit**
+- [x] **Step 5: Delete the scratch file and commit**
 
 ```bash
 git add src/oh_my_bot/approvals.py src/oh_my_bot/telegram_client.py src/oh_my_bot/tools/
@@ -1207,17 +1207,17 @@ git commit -m "feat: gate exec behind per-command Telegram approval"
 **Interfaces:**
 - Produces: `ActorPool(handler)` with `submit(chat_id, item)`. Replaces `ThreadPoolExecutor` and `ChatLocks` in `main.py` (Task 11).
 
-- [ ] **Step 1: Write `src/oh_my_bot/actors.py`**
+- [x] **Step 1: Write `src/oh_my_bot/actors.py`**
 
 A dict of `chat_id -> (Queue, Thread)` guarded by a registry lock (the same pattern `ChatLocks` already uses), created on first message. Each actor thread loops forever on `queue.get()` and calls `handler(item)`, catching and logging every exception so one bad turn never kills the actor. Threads are daemons and live for the process lifetime.
 
 FIFO ordering falls out of the queue: a message arriving mid-turn waits, exactly as the per-chat lock did before — but now the wait costs no shared resource, which is what makes blocking on an approval safe.
 
-- [ ] **Step 2: Delete `ChatLocks` from `src/oh_my_bot/worker.py`**
+- [x] **Step 2: Delete `ChatLocks` from `src/oh_my_bot/worker.py`**
 
 The actor's queue subsumes it. `worker.py` is now just `run_llm_call` and its child-process target.
 
-- [ ] **Step 3: Verify ordering, isolation, and crash resilience**
+- [x] **Step 3: Verify ordering, isolation, and crash resilience**
 
 Write to `$SCRATCH/verify_actors.py` a script asserting:
 - Ten items submitted to one chat are handled in submission order.
@@ -1227,7 +1227,7 @@ Write to `$SCRATCH/verify_actors.py` a script asserting:
 
 Expected: one `OK` line per case.
 
-- [ ] **Step 4: Delete the scratch file and commit**
+- [x] **Step 4: Delete the scratch file and commit**
 
 ```bash
 git add src/oh_my_bot/actors.py src/oh_my_bot/worker.py
@@ -1247,7 +1247,7 @@ git commit -m "feat: replace the thread pool with one actor thread per chat"
 
 The spec's build order put breakers in a later phase; they ship here instead. An unbounded loop that can call `exec` on this host is not a state to leave the code in between commits.
 
-- [ ] **Step 1: Write `src/oh_my_bot/agent.py`**
+- [x] **Step 1: Write `src/oh_my_bot/agent.py`**
 
 ```python
 import logging
@@ -1327,7 +1327,7 @@ def _send_progress(token, chat_id, tool_call, output) -> None:
 
 Note the ordering inside the tool loop: the assistant turn carrying `tool_calls` is persisted **before** any tool runs. If the process dies mid-tool, the history still contains a tool call with no result — which is malformed for a follow-up request, and is why a restart abandons in-flight turns rather than resuming them.
 
-- [ ] **Step 2: Verify every loop path with a fake connector**
+- [x] **Step 2: Verify every loop path with a fake connector**
 
 Write to `$SCRATCH/verify_agent.py` a script with a scripted fake connector (returns a queued list of `AssistantMessage`s) and monkeypatched `send_message`, asserting:
 - **Happy path:** message with no tool calls → one send, history ends with an assistant message.
@@ -1342,7 +1342,7 @@ Write to `$SCRATCH/verify_agent.py` a script with a scripted fake connector (ret
 
 Expected: one `OK` line per case.
 
-- [ ] **Step 3: Delete the scratch file and commit**
+- [x] **Step 3: Delete the scratch file and commit**
 
 ```bash
 git add src/oh_my_bot/agent.py
@@ -1359,7 +1359,7 @@ git commit -m "feat: add the agentic loop with iteration, transport, and tool br
 **Interfaces:**
 - Consumes: everything above. Produces the runnable agent. `handle_update` is deleted from `worker.py`; `agent.run_turn` replaces it.
 
-- [ ] **Step 1: Rewrite `main()` in `src/oh_my_bot/main.py`**
+- [x] **Step 1: Rewrite `main()` in `src/oh_my_bot/main.py`**
 
 It now:
 1. Loads config, builds the `Store` and calls `init_schema()`, builds the connector, the `ApprovalRegistry`, and an `ActorPool` whose handler builds a `Session` and calls `agent.run_turn`.
@@ -1370,17 +1370,17 @@ It now:
    - anything else → ignored.
 4. Advances `offset` immediately after each poll batch, as before.
 
-- [ ] **Step 2: Delete `handle_update` and `ChatLocks` remnants from `src/oh_my_bot/worker.py`**
+- [x] **Step 2: Delete `handle_update` and `ChatLocks` remnants from `src/oh_my_bot/worker.py`**
 
 `worker.py` should now contain only `run_llm_call` and `_llm_call_target`.
 
-- [ ] **Step 3: Verify routing with fake updates**
+- [x] **Step 3: Verify routing with fake updates**
 
 Write to `$SCRATCH/verify_router.py` a script that extracts the routing decision into the same shape `main.py` uses and asserts: an allowlisted private message is submitted; a non-allowlisted message is dropped; a group message from an allowlisted user is dropped; a callback query from an allowlisted user reaches `approvals.resolve`; a callback query from a **non**-allowlisted user is dropped (this is the one that would otherwise let anyone approve your commands by guessing a request id); an update with neither key is ignored without raising.
 
 Expected: one `OK` line per case.
 
-- [ ] **Step 4: End-to-end verification (manual, human required)**
+- [x] **Step 4: End-to-end verification (manual, human required)**
 
 Start the LLM server and run `uv run oh-my-bot`. From Telegram:
 - Ask "what files are in the current directory?" — confirm an approval keyboard appears, tap **Allow**, confirm a `$ ls` progress message and then a final answer.
@@ -1393,7 +1393,7 @@ Start the LLM server and run `uv run oh-my-bot`. From Telegram:
 - With an approval pending in your chat, message from a second allowlisted account — confirm it gets a reply while the first is still blocked.
 - Ask it to run `env` — confirm no bot token appears. Note that `cat .env` **would** still show it: scrubbing removes secrets from the command's *environment*, and the file on disk is protected by the approval gate, not by scrubbing. If that gap bothers you, move `.env` outside the repo and point at it explicitly.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/oh_my_bot/main.py src/oh_my_bot/worker.py
@@ -1413,13 +1413,13 @@ git commit -m "feat: route updates to per-chat agents and pending approvals"
 
 Debugging a 1.7B model means constantly asking "what did it actually see, and what did it actually say?" Reconstructing that from Telegram messages is guesswork; this makes it a SQL query.
 
-- [ ] **Step 1: Capture the raw exchange**
+- [x] **Step 1: Capture the raw exchange**
 
 `run_llm_call` already crosses a process boundary, so the child cannot write to the store (its connection is thread-local to the parent). Instead, have `_llm_call_target` return the raw response JSON alongside the parsed `AssistantMessage`, and have `agent.run_turn` — which runs in the actor thread and owns the connection — call `session.store.append_trace(session.session_id, request, response)` after each call.
 
 Record the messages sent and the raw response, including on the failure paths: a trace of a call that failed is often the more useful one.
 
-- [ ] **Step 2: Verify traces are written and readable**
+- [x] **Step 2: Verify traces are written and readable**
 
 Run a scripted turn (reuse the fake connector from Task 10), then:
 
@@ -1436,11 +1436,11 @@ print('OK: traces recorded')
 ```
 Expected: one line per trace and `OK: traces recorded`.
 
-- [ ] **Step 3: Add a convenience query to the README**
+- [x] **Step 3: Add a convenience query to the README**
 
 A short "Debugging" section showing how to dump the last exchange for a session with `sqlite3`. You will use this constantly.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add src/oh_my_bot/worker.py src/oh_my_bot/agent.py README.md
@@ -1459,7 +1459,7 @@ git commit -m "feat: trace every LLM request and response to SQLite"
 **Interfaces:**
 - Produces: `estimate_tokens(messages, ratio) -> int`, `message_chars(messages) -> int`, `update_ratio(store, model, messages, usage) -> float`. Consumed by Task 14 and by `agent.py`.
 
-- [ ] **Step 1: Write the estimator and the calibration**
+- [x] **Step 1: Write the estimator and the calibration**
 
 ```python
 def message_chars(messages) -> int:
@@ -1488,13 +1488,13 @@ def update_ratio(store, model: str, messages, usage: dict) -> float:
 
 Call `update_ratio` from `agent.run_turn` after every successful model call, passing the messages that were sent and `message.usage`.
 
-- [ ] **Step 2: Verify convergence**
+- [x] **Step 2: Verify convergence**
 
 Write to `$SCRATCH/verify_context.py` a script that feeds `update_ratio` twenty synthetic responses whose `prompt_tokens` imply a true ratio of 3.0, starting from the 4.0 default, and asserts the stored ratio ends within 5% of 3.0. Also assert that a response with no `usage` leaves the ratio untouched (Ollama omits it in some configurations), and that `estimate_tokens` never divides by zero when the ratio is degenerate.
 
 Expected: three `OK` lines.
 
-- [ ] **Step 3: Delete the scratch file and commit**
+- [x] **Step 3: Delete the scratch file and commit**
 
 ```bash
 git add src/oh_my_bot/context.py src/oh_my_bot/agent.py
@@ -1511,7 +1511,7 @@ git commit -m "feat: estimate prompt tokens and calibrate from reported usage"
 **Interfaces:**
 - Produces: `compact(messages, budget, ratio, summarize) -> (messages, note)`. Called from `agent.run_turn` before **every** model call, including mid-loop.
 
-- [ ] **Step 1: Implement the three tiers in `src/oh_my_bot/context.py`**
+- [x] **Step 1: Implement the three tiers in `src/oh_my_bot/context.py`**
 
 Tiers run in order, each stopping as soon as the estimate is under budget:
 
@@ -1528,13 +1528,13 @@ def _safe_cut_points(messages, pinned: int) -> list:
     return [i for i in range(pinned, len(messages)) if messages[i]["role"] == "user"]
 ```
 
-- [ ] **Step 2: Wire it into `agent.run_turn`**
+- [x] **Step 2: Wire it into `agent.run_turn`**
 
 Before each `run_llm_call`, compute `budget = config.llm_context_tokens * config.compact_threshold_pct // 100`; if `estimate_tokens(history, ratio) > budget`, compact, persist the compacted history with `store.replace_messages`, and post a short note to the chat ("Compacted the conversation to stay within the context window."). Add a `/compact` command to `handle_command` that forces a pass.
 
 Because this runs before every call rather than once per user message, a single tool-heavy turn cannot overflow on its own.
 
-- [ ] **Step 3: Verify each tier in isolation and in sequence**
+- [x] **Step 3: Verify each tier in isolation and in sequence**
 
 Write to `$SCRATCH/verify_compact.py` a script asserting:
 - **Tier 1 alone:** a history whose bulk is old tool output drops under budget with tier 1 only; the two most recent tool results are still intact; no summarizer was called.
@@ -1545,11 +1545,11 @@ Write to `$SCRATCH/verify_compact.py` a script asserting:
 
 Expected: one `OK` line per case.
 
-- [ ] **Step 4: Verify end-to-end (manual, human required)**
+- [x] **Step 4: Verify end-to-end (manual, human required)**
 
 Temporarily set `LLM_CONTEXT_TOKENS=1500` and run a long tool-heavy conversation. Confirm the compaction notice appears, the bot stays coherent afterwards, and no backend 400s appear in the logs. Restore the real value — and set it to match your server's actual configured window, not the model's advertised maximum. Ollama defaults `num_ctx` to 4096 regardless of the model.
 
-- [ ] **Step 5: Delete the scratch file and commit**
+- [x] **Step 5: Delete the scratch file and commit**
 
 ```bash
 git add src/oh_my_bot/context.py src/oh_my_bot/agent.py src/oh_my_bot/session.py
@@ -1570,7 +1570,7 @@ Skills come last because their value depends on a loop you already trust, and be
 **Interfaces:**
 - Produces: `Skill` (`name`, `description`, `dir`, `body_path`), `parse_frontmatter(text) -> (dict, body)`, `load_skills(skills_dir) -> dict`, `skill_index(skills) -> str`, `read_skill_body(skill) -> str`.
 
-- [ ] **Step 1: Write the loader**
+- [x] **Step 1: Write the loader**
 
 `parse_frontmatter` handles a leading `---` block of `key: value` lines by hand — no PyYAML. Unknown keys are parsed and ignored, leaving room to honor `allowed-tools` later without a format change. A `SKILL.md` missing `name` or `description` is skipped with a warning rather than crashing startup; the directory name is the fallback for `name`.
 
@@ -1578,7 +1578,7 @@ Skills come last because their value depends on a loop you already trust, and be
 
 `skill_index` renders one `- name: description` line per skill for the system prompt.
 
-- [ ] **Step 2: Write an example skill at `skills/check-disk/SKILL.md`**
+- [x] **Step 2: Write an example skill at `skills/check-disk/SKILL.md`**
 
 ```markdown
 ---
@@ -1595,13 +1595,13 @@ To investigate disk usage:
 Report the top few offenders with their sizes. Do not delete anything.
 ```
 
-- [ ] **Step 3: Verify the loader**
+- [x] **Step 3: Verify the loader**
 
 Assert against a temp skills dir: a well-formed skill loads with the right name and description; a `SKILL.md` with no frontmatter is skipped without raising; one missing `description` is skipped; unknown frontmatter keys are ignored rather than fatal; `skill_index` includes every loaded skill; `read_skill_body` returns the body **without** the frontmatter block; and a missing `SKILLS_DIR` yields an empty dict rather than an error.
 
 Expected: one `OK` line per case.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add src/oh_my_bot/skills.py skills/
@@ -1619,11 +1619,11 @@ git commit -m "feat: add SKILL.md discovery and frontmatter parsing"
 **Interfaces:**
 - Produces: the `skill` tool, the skill index in the system prompt, and the `/skills` and `/skill <name>` commands.
 
-- [ ] **Step 1: Put the index in the system prompt**
+- [x] **Step 1: Put the index in the system prompt**
 
 `Session` takes the loaded skills dict; `system_prompt()` appends the index under a heading explaining that these are available and that calling `skill(name)` loads the full instructions. Only names and descriptions go in — never bodies.
 
-- [ ] **Step 2: Write `src/oh_my_bot/tools/skill.py`**
+- [x] **Step 2: Write `src/oh_my_bot/tools/skill.py`**
 
 The handler takes a `name`, returns the body, and appends a line naming the skill's directory so the model can invoke sibling scripts through `exec`:
 
@@ -1641,19 +1641,19 @@ An unknown name raises `ToolError`, so a wrong guess becomes a tool result listi
 
 Running a skill's script goes through `exec`, so it hits the normal approval gate. That is deliberate: a bundled script is still arbitrary code.
 
-- [ ] **Step 3: Add `/skills` and `/skill <name>`**
+- [x] **Step 3: Add `/skills` and `/skill <name>`**
 
 `/skills` lists the index. `/skill <name>` loads the body directly into the session history as a user message, bypassing the model's choice entirely — the override for when it picks wrong, and the way to tell whether its own choosing works at all.
 
-- [ ] **Step 4: Verify**
+- [x] **Step 4: Verify**
 
 Assert: the system prompt contains every skill's description and **no** skill body; `skill_tool` returns the body plus the directory line; an unknown name raises `ToolError` listing the available names; `/skills` lists them; `/skill check-disk` appends the body to the history; `/skill nope` returns a clear error without touching the history.
 
-- [ ] **Step 5: Verify end-to-end (manual, human required)**
+- [x] **Step 5: Verify end-to-end (manual, human required)**
 
 Ask the bot "my disk is full, can you look into it?" and see whether it calls `skill("check-disk")` on its own. Then ask the same thing after `/skill check-disk`. If the model never picks the skill unaided, that is a finding about progressive disclosure at this model size, not a bug — record it in the README and use the explicit command.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/oh_my_bot/tools/ src/oh_my_bot/session.py src/oh_my_bot/main.py
@@ -1667,21 +1667,21 @@ git commit -m "feat: load skills on demand via the skill tool and /skill"
 **Files:**
 - Modify: `README.md`, `docs/superpowers/specs/2026-08-28-agentic-harness-design.md`
 
-- [ ] **Step 1: Rewrite the README's architecture and limitations sections**
+- [x] **Step 1: Rewrite the README's architecture and limitations sections**
 
 Update the file table for the new modules, document every new environment variable, and add sections for: the user allowlist and how to find your Telegram user id; the approval flow and its escape hatches; writing a skill; the `sqlite3` debugging queries; and how to set `LLM_CONTEXT_TOKENS` correctly for your backend.
 
 Replace "No conversation memory" in Known limitations with the real remaining ones: DMs only; an in-flight turn is abandoned on restart; `exec` runs unsandboxed on the host by design, with the user allowlist and per-command approval as the only boundary; progressive disclosure depends on model quality.
 
-- [ ] **Step 2: Record the resolved open questions in the spec**
+- [x] **Step 2: Record the resolved open questions in the spec**
 
 Replace the spec's "Open questions" section with the decisions table from this plan, plus anything you decided differently during implementation. A spec that still asks questions the code has answered is worse than no spec.
 
-- [ ] **Step 3: Full manual regression**
+- [x] **Step 3: Full manual regression**
 
 Walk the spec's Testing section end to end. The security-relevant ones are not optional: allowlist rejection, workspace escape, env scrubbing, and approval expiry.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add README.md docs/
