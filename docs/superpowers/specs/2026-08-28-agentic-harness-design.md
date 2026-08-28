@@ -79,6 +79,7 @@ Existing variables are unchanged except where noted. New ones:
 | `EXEC_MAX_OUTPUT_BYTES` | no | `8192` | Truncation cap on captured output *(open, see Q5)* |
 | `APPROVAL_TIMEOUT_SECONDS` | no | `600` | How long a pending approval waits before auto-denying |
 | `LLM_CONTEXT_TOKENS` | no | `4096` | The **server's** configured context window |
+| `LLM_MAX_TOKENS` | no | `2048` | Generation budget per reply; `0` defers to the server. Servers default this low (mlx_lm.server: 512), which a reasoning model spends entirely on thinking |
 | `REASONING_TAGS` | no | `think,thinking,reasoning,thought,reflection,scratchpad` | Tags whose contents are stripped from replies; empty disables stripping |
 | `STOP_SEQUENCES` | no | `<\|im_end\|>,<\|endoftext\|>,<\|eot_id\|>,<end_of_turn>` | End-of-turn markers sent to the server and truncated on; empty disables truncation |
 | `COMPACT_THRESHOLD_PCT` | no | `75` | Percent of the window that triggers compaction *(open, see Q6)* |

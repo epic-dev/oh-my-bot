@@ -35,6 +35,7 @@ LLM_TIMEOUT_SECONDS=60
 POLL_TIMEOUT_SECONDS=30
 REASONING_TAGS=think,thinking,reasoning,thought,reflection,scratchpad
 STOP_SEQUENCES=<|im_end|>,<|endoftext|>,<|eot_id|>,<end_of_turn>
+LLM_MAX_TOKENS=2048
 ```
 
 ### 3. Start a local LLM server
@@ -180,6 +181,18 @@ REASONING_TAGS=                       # strip nothing
 ```
 
 Set it to an empty value if you ever want to see the raw reasoning while debugging.
+
+### Generation budget
+
+`mlx_lm.server` caps a reply at **512 tokens** by default, and Ollama has its own limit. That is
+not enough for a reasoning model: Qwen3 can spend 500+ tokens thinking before it writes a word of
+the answer, so generation stops mid-thought and the reply cleans down to nothing. `LLM_MAX_TOKENS`
+(default 2048) is sent as `max_tokens` to prevent that; set it to `0` to defer to the server.
+
+If a reply still comes back empty with `finish_reason: length`, the model used its whole budget
+thinking. Raising `LLM_MAX_TOKENS` helps; for Qwen3 specifically, appending `/no_think` to a
+message disables thinking for that turn — in local testing the same question took 684 tokens with
+thinking and 44 without.
 
 ### End-of-turn markers
 

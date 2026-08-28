@@ -84,6 +84,14 @@ def handle_update(update, config, connector, chat_locks, telegram_token, store):
             )
             if status == "ok":
                 reply = payload.content
+                if not reply and payload.finish_reason == "length":
+                    # The model used its whole budget without producing an answer — for a
+                    # reasoning model, it never finished thinking. Say so, rather than the
+                    # generic empty-reply fallback, because the fix is a real one.
+                    reply = (
+                        "I ran out of room while thinking and never got to an answer. "
+                        "Try asking more specifically, or raise LLM_MAX_TOKENS."
+                    )
             else:
                 logger.error("LLM call failed (%s): %s", status, payload)
                 reply = _FAILURE_REPLIES[status]

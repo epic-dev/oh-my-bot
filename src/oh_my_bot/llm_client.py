@@ -36,10 +36,13 @@ class ToolCall:
 
 @dataclass
 class AssistantMessage:
-    # One assistant turn: free text, tool calls, or both, plus the backend's token accounting.
+    # One assistant turn: free text, tool calls, or both, plus the backend's token accounting and
+    # why generation stopped. finish_reason == "length" means the model was cut off mid-sentence,
+    # which for a reasoning model usually means it never got past its own chain of thought.
     content: Optional[str] = None
     tool_calls: list = field(default_factory=list)
     usage: dict = field(default_factory=dict)
+    finish_reason: Optional[str] = None
 
 
 @lru_cache(maxsize=8)
@@ -173,13 +176,16 @@ class LLMConnector(ABC):
 
 
 class OpenAICompatConnector(LLMConnector):
-    def __init__(self, base_url: str, model: str, reasoning_tags: tuple, stop_sequences: tuple):
+    def __init__(
+        self, base_url: str, model: str, reasoning_tags: tuple, stop_sequences: tuple, max_tokens: int
+    ):
         # Stores the backend's base URL, model name, the reasoning tags to strip from replies,
-        # and the end-of-turn markers to stop on.
+        # the end-of-turn markers to stop on, and the generation budget per reply.
         self.base_url = base_url
         self.model = model
         self.reasoning_tags = tuple(reasoning_tags)
         self.stop_sequences = tuple(stop_sequences)
+        self.max_tokens = max_tokens
 
     def complete(self, messages: list, tools: Optional[list] = None) -> AssistantMessage:
         # POSTs messages (and any tool schemas) to {base_url}/chat/completions and returns the
@@ -190,6 +196,11 @@ class OpenAICompatConnector(LLMConnector):
         # or models that ignore the tools parameter.
         url = f"{self.base_url}/chat/completions"
         payload = {"model": self.model, "messages": messages}
+        if self.max_tokens:
+            # Servers default this low (mlx_lm.server caps at 512), which is not enough for a
+            # reasoning model to finish thinking AND answer — generation stops mid-thought and
+            # the reply cleans down to nothing.
+            payload["max_tokens"] = self.max_tokens
         if tools:
             payload["tools"] = tools
         if self.stop_sequences:
@@ -199,7 +210,8 @@ class OpenAICompatConnector(LLMConnector):
         resp = requests.post(url, json=payload, timeout=120)
         resp.raise_for_status()
         data = resp.json()
-        message = data["choices"][0]["message"]
+        choice = data["choices"][0]
+        message = choice["message"]
 
         content = truncate_at_stop(message.get("content"), self.stop_sequences)
         content = strip_reasoning(strip_special_tokens(content), self.reasoning_tags)
@@ -208,4 +220,9 @@ class OpenAICompatConnector(LLMConnector):
         tool_calls = [c for c in (_normalize_tool_call(r) for r in raw_calls) if c]
         if not tool_calls:
             tool_calls, content = parse_text_tool_calls(content)
-        return AssistantMessage(content=content, tool_calls=tool_calls, usage=data.get("usage") or {})
+        return AssistantMessage(
+            content=content,
+            tool_calls=tool_calls,
+            usage=data.get("usage") or {},
+            finish_reason=choice.get("finish_reason"),
+        )

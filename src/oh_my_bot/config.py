@@ -21,6 +21,7 @@ class Config:
     telegram_bot_token: str
     llm_base_url: str
     llm_model: str
+    llm_max_tokens: int
     reasoning_tags: tuple
     stop_sequences: tuple
     max_workers: int
@@ -81,6 +82,7 @@ def load_config() -> Config:
         telegram_bot_token=token,
         llm_base_url=os.environ.get("LLM_BASE_URL", "http://localhost:8080/v1"),
         llm_model=os.environ.get("LLM_MODEL", "qwen3:1.7b"),
+        llm_max_tokens=int(os.environ.get("LLM_MAX_TOKENS", "2048")),
         reasoning_tags=_parse_reasoning_tags(os.environ.get("REASONING_TAGS")),
         stop_sequences=_parse_stop_sequences(os.environ.get("STOP_SEQUENCES")),
         max_workers=int(os.environ.get("MAX_WORKERS", "4")),

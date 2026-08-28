@@ -31,7 +31,11 @@ def main():
     # Loads config, starts the thread pool, and long-polls Telegram forever, dispatching updates to workers.
     config = load_config()
     connector = OpenAICompatConnector(
-        config.llm_base_url, config.llm_model, config.reasoning_tags, config.stop_sequences
+        config.llm_base_url,
+        config.llm_model,
+        config.reasoning_tags,
+        config.stop_sequences,
+        config.llm_max_tokens,
     )
     store = Store(config.db_path)
     store.init_schema()
