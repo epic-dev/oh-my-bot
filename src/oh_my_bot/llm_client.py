@@ -1,6 +1,10 @@
+import json
 import re
+import uuid
 from abc import ABC, abstractmethod
+from dataclasses import dataclass, field
 from functools import lru_cache
+from typing import Optional
 
 import requests
 
@@ -8,6 +12,34 @@ import requests
 # should consume these, but some servers decode them into the reply as plain text. Real prose
 # never contains this bracket form, so anything matching it is a leaked control token.
 _SPECIAL_TOKEN_RE = re.compile(r"<\|[^|>\s]{0,64}\|>")
+
+# Matches a ```tool ...``` (or plain ```json ...```) fence, used when the backend or model
+# ignores the native tools API and writes the call into the message body instead.
+_FENCE_RE = re.compile(r"```(?:tool|json)?\s*(\{.*?\})\s*```", re.DOTALL)
+
+
+@dataclass
+class ToolCall:
+    # One tool invocation requested by the model, normalized across native and text-fallback forms.
+    id: str
+    name: str
+    arguments: dict = field(default_factory=dict)
+
+    def to_wire(self) -> dict:
+        # Renders this call back into OpenAI chat-completions shape for storage in the history.
+        return {
+            "id": self.id,
+            "type": "function",
+            "function": {"name": self.name, "arguments": json.dumps(self.arguments)},
+        }
+
+
+@dataclass
+class AssistantMessage:
+    # One assistant turn: free text, tool calls, or both, plus the backend's token accounting.
+    content: Optional[str] = None
+    tool_calls: list = field(default_factory=list)
+    usage: dict = field(default_factory=dict)
 
 
 @lru_cache(maxsize=8)
@@ -84,10 +116,59 @@ def strip_reasoning(content, tags: tuple):
     return text.strip()
 
 
+def _normalize_tool_call(raw: dict) -> Optional[ToolCall]:
+    # Converts one raw native tool_call entry into a ToolCall, tolerating backends that omit
+    # the id or send arguments as an object instead of a JSON string.
+    function = raw.get("function") or {}
+    name = function.get("name")
+    if not name:
+        return None
+    arguments = function.get("arguments")
+    if isinstance(arguments, str):
+        try:
+            arguments = json.loads(arguments) if arguments.strip() else {}
+        except json.JSONDecodeError:
+            return None
+    if not isinstance(arguments, dict):
+        return None
+    return ToolCall(id=raw.get("id") or uuid.uuid4().hex, name=name, arguments=arguments)
+
+
+def parse_text_tool_calls(content):
+    # Extracts tool calls the model wrote into its message body as a fenced JSON block, and
+    # returns them alongside the content with those fences removed, so a call the model wrote as
+    # prose is not also shown to the user as prose.
+    if not content:
+        return [], content
+    calls = []
+    spans = []
+    for match in _FENCE_RE.finditer(content):
+        try:
+            payload = json.loads(match.group(1))
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(payload, dict):
+            continue
+        name = payload.get("name") or payload.get("tool")
+        if not name:
+            continue
+        arguments = payload.get("arguments") or payload.get("parameters") or {}
+        if not isinstance(arguments, dict):
+            continue
+        calls.append(ToolCall(id=uuid.uuid4().hex, name=name, arguments=arguments))
+        spans.append(match.span())
+    if not calls:
+        return [], content
+    remaining = content
+    for start, end in reversed(spans):
+        remaining = remaining[:start] + remaining[end:]
+    return calls, remaining.strip()
+
+
 class LLMConnector(ABC):
     @abstractmethod
-    def complete(self, messages: list[dict]) -> str:
-        # Sends chat messages to a backend and returns its text reply. Implemented per backend.
+    def complete(self, messages: list, tools: Optional[list] = None) -> AssistantMessage:
+        # Sends chat messages plus tool schemas to a backend and returns its assistant turn.
         raise NotImplementedError
 
 
@@ -100,13 +181,17 @@ class OpenAICompatConnector(LLMConnector):
         self.reasoning_tags = tuple(reasoning_tags)
         self.stop_sequences = tuple(stop_sequences)
 
-    def complete(self, messages: list[dict]) -> str:
-        # POSTs messages to {base_url}/chat/completions and returns the reply text, cleaned of
-        # anything that is not the answer: content past an end-of-turn marker, leaked control
-        # tokens, and chain-of-thought. Backends that return reasoning in a separate field
-        # (reasoning_content) are handled for free: only `content` is ever read.
+    def complete(self, messages: list, tools: Optional[list] = None) -> AssistantMessage:
+        # POSTs messages (and any tool schemas) to {base_url}/chat/completions and returns the
+        # assistant turn. Content is cleaned of everything that is not the answer — text past an
+        # end-of-turn marker, leaked control tokens, and chain-of-thought — before tool calls are
+        # read from it, so a tool call the model only *considered* inside its reasoning is never
+        # executed. Native tool_calls win; a fenced block in the body is the fallback for backends
+        # or models that ignore the tools parameter.
         url = f"{self.base_url}/chat/completions"
         payload = {"model": self.model, "messages": messages}
+        if tools:
+            payload["tools"] = tools
         if self.stop_sequences:
             # Asking the server to stop is the actual fix; the client-side cleaning below is a
             # fallback for servers that ignore this parameter.
@@ -114,6 +199,13 @@ class OpenAICompatConnector(LLMConnector):
         resp = requests.post(url, json=payload, timeout=120)
         resp.raise_for_status()
         data = resp.json()
-        content = truncate_at_stop(data["choices"][0]["message"]["content"], self.stop_sequences)
-        content = strip_special_tokens(content)
-        return strip_reasoning(content, self.reasoning_tags)
+        message = data["choices"][0]["message"]
+
+        content = truncate_at_stop(message.get("content"), self.stop_sequences)
+        content = strip_reasoning(strip_special_tokens(content), self.reasoning_tags)
+
+        raw_calls = message.get("tool_calls") or []
+        tool_calls = [c for c in (_normalize_tool_call(r) for r in raw_calls) if c]
+        if not tool_calls:
+            tool_calls, content = parse_text_tool_calls(content)
+        return AssistantMessage(content=content, tool_calls=tool_calls, usage=data.get("usage") or {})
