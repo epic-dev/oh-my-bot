@@ -714,6 +714,11 @@ import requests
 # ignores the native tools API and writes the call into the message body instead.
 _FENCE_RE = re.compile(r"```(?:tool|json)?\s*(\{.*?\})\s*```", re.DOTALL)
 
+# Reasoning models (Qwen3 among them) wrap chain of thought in <think>...</think> inside the
+# normal content field. strip_thinking() removes it; see the module for the three shapes it
+# arrives in. Tool calls are parsed from the *stripped* content, so a tool call the model only
+# considered inside its reasoning is never executed.
+
 
 @dataclass
 class ToolCall:
@@ -797,7 +802,7 @@ class OpenAICompatConnector(LLMConnector):
         resp.raise_for_status()
         data = resp.json()
         message = data["choices"][0]["message"]
-        content = message.get("content")
+        content = strip_thinking(message.get("content"))
         raw_calls = message.get("tool_calls") or []
         tool_calls = [c for c in (_normalize_tool_call(r) for r in raw_calls) if c]
         if not tool_calls:
@@ -821,6 +826,8 @@ Write to `$SCRATCH/verify_llm_client.py` a stub `HTTPServer` (same pattern as th
 5. A response whose fence contains malformed JSON.
 
 Assert: cases 1-3 each yield exactly one `ToolCall` with `arguments == {"command": "ls"}` and a non-empty `id`; case 4 yields `tool_calls == []` and the content intact; case 5 yields `tool_calls == []` rather than raising. Also assert `usage` is carried through when present.
+
+`strip_thinking` and its own test cases already exist from the mid-plan fix — keep them, and add one case here: a response whose content is `<think>maybe I should ls</think>` followed by a real fenced tool call must yield exactly one tool call, and a response where the *only* fenced call sits **inside** a `<think>` block must yield none. Reasoning about a command is not a decision to run it, which matters more once `exec` exists.
 
 Expected: one `OK` line per case. Case 2 is the one that matters most in practice — it is what Ollama actually sends.
 
