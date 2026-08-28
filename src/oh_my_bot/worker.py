@@ -3,7 +3,7 @@ import multiprocessing
 import queue
 import threading
 
-from .llm_client import build_messages
+from .session import Session, handle_command
 from .telegram_client import send_message
 
 logger = logging.getLogger(__name__)
@@ -55,10 +55,9 @@ def run_llm_call(connector, messages: list[dict], timeout: int) -> str:
     return payload
 
 
-def handle_update(update, config, connector, chat_locks, telegram_token):
-    # Processes one Telegram update end-to-end: serialize per chat, call the LLM, send the reply.
-    # The whole pipeline (chat_id/text extraction through the final send_message) is guarded so
-    # no unexpected exception ever escapes this function.
+def handle_update(update, config, connector, chat_locks, telegram_token, store):
+    # Processes one Telegram update end-to-end: serialize per chat, run the session turn, send the
+    # reply. The whole pipeline is guarded so no unexpected exception ever escapes this function.
     message = update.get("message")
     if not message or "text" not in message:
         return
@@ -68,8 +67,14 @@ def handle_update(update, config, connector, chat_locks, telegram_token):
         text = message["text"]
         lock = chat_locks.get(chat_id)
         with lock:
-            messages = build_messages(chat_id, text)
-            reply = run_llm_call(connector, messages, config.llm_timeout_seconds)
+            session = Session(chat_id, store, config)
+            command_reply = handle_command(text, session)
+            if command_reply is not None:
+                send_message(telegram_token, chat_id, command_reply)
+                return
+            session.add_user(text)
+            reply = run_llm_call(connector, session.history(), config.llm_timeout_seconds)
+            session.add_assistant(reply)
             send_message(telegram_token, chat_id, reply)
     except Exception:
         logger.exception("Unexpected error handling update for chat %s", chat_id)

@@ -27,8 +27,3 @@ class OpenAICompatConnector(LLMConnector):
         resp.raise_for_status()
         data = resp.json()
         return data["choices"][0]["message"]["content"]
-
-
-def build_messages(chat_id: int, text: str) -> list[dict]:
-    # Builds the chat-completion messages list for one incoming user message (no history yet).
-    return [{"role": "user", "content": text}]

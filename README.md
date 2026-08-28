@@ -198,6 +198,6 @@ Each LLM call runs in its own OS process so a hung or slow request can be killed
 
 ## Known limitations
 
-- No conversation memory — each message is answered independently (the codebase has a single seam, `build_messages()` in `llm_client.py`, ready for this later).
+- Conversation history is kept per chat in SQLite and survives restarts; `/new` starts a fresh session. Only allowlisted Telegram user ids (`ALLOWED_USER_IDS`) may use the bot, and only in private chats.
 - A burst of more than `MAX_WORKERS` messages from one chat can briefly delay replies to other chats (the per-chat lock holds a thread-pool slot for the LLM call's full duration).
 - `mlx_lm.server` is not recommended for production use as-is (per its own startup warning) — fine for personal/local use.
