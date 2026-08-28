@@ -137,7 +137,11 @@ Append:
 ```
 workspaces/
 *.db
+*.db-wal
+*.db-shm
 ```
+
+The two sidecar patterns matter: `store.py` runs in WAL mode, which creates `oh-my-bot.db-wal` and `oh-my-bot.db-shm` alongside the database, and `*.db` does not match either.
 
 - [ ] **Step 4: Verify config loads and rejects bad input**
 
