@@ -7,6 +7,7 @@ from .approvals import ApprovalRegistry
 from .config import load_config
 from .llm_client import OpenAICompatConnector
 from .session import Session
+from .skills import load_skills
 from .store import Store
 from .telegram_client import _redact, get_updates
 
@@ -69,11 +70,12 @@ def main():
     store = Store(config.db_path)
     store.init_schema()
     approvals = ApprovalRegistry(config.telegram_bot_token, config.approval_timeout_seconds)
+    skills = load_skills(config.skills_dir)
 
     def handle(item):
         # Runs one queued message on its chat's actor thread.
         chat_id, text = item
-        session = Session(chat_id, store, config)
+        session = Session(chat_id, store, config, skills)
         run_turn(text, session, connector, config, approvals, config.telegram_bot_token)
 
     actors = ActorPool(handle)

@@ -280,6 +280,42 @@ oh-my-bot/
 
 Each LLM call runs in its own OS process so a hung or slow request can be killed on timeout without affecting other users — it doesn't just get abandoned like a stuck thread would.
 
+## Skills
+
+A skill is a folder in `skills/` holding a `SKILL.md` of instructions, plus any scripts it needs:
+
+```
+skills/
+└── check-disk/
+    ├── SKILL.md
+    └── (optional scripts the agent can run through exec)
+```
+
+```markdown
+---
+name: check-disk
+description: Investigate disk usage and find what is taking up space.
+---
+
+Instructions the model should follow for this kind of task.
+```
+
+Only the **name and description** of each skill go into the system prompt. The model calls the
+`skill` tool to load the full instructions when it decides a task needs them — so adding skills
+costs almost nothing in context until one is used. Scripts a skill bundles are run through `exec`,
+which means they still pass the normal approval gate; a bundled script is arbitrary code like any
+other.
+
+`/skills` lists what is installed. `/skill <name>` loads one into the conversation directly,
+bypassing the model's choice — useful when it picks wrong, and the way to tell whether it is
+choosing well at all.
+
+**On small models:** whether a 1.7B model reaches for the right skill unaided is genuinely
+uncertain. Qwen3-1.7B tends to call a tool *named after* the skill instead of calling `skill` with
+that name, so the bot treats such a call as the skill load it obviously meant. If it still never
+picks a skill on its own, use `/skill <name>` and treat progressive disclosure as a bigger-model
+feature.
+
 ## Debugging
 
 Every model request and response is recorded in the `traces` table, including calls that failed.

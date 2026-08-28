@@ -1,15 +1,33 @@
 import logging
+from dataclasses import replace
 
 from .base import ToolContext, ToolError
 from .exec import exec_tool
 from .files import read_file, write_file
+from .skill import skill_tool
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["TOOL_SCHEMAS", "ToolContext", "ToolError", "dispatch"]
+__all__ = ["TOOL_SCHEMAS", "ToolContext", "ToolError", "dispatch", "tool_schemas"]
 
 # OpenAI function schemas advertised to the model. exec is registered in Task 7 and skill in
 # Task 16; both append to these two structures rather than replacing them.
+SKILL_SCHEMA = {
+    "type": "function",
+    "function": {
+        "name": "skill",
+        "description": (
+            "Load the full instructions for one of the available skills, by name. Call this "
+            "before attempting a task a skill covers, then follow the instructions it returns."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {"name": {"type": "string", "description": "The skill's name."}},
+            "required": ["name"],
+        },
+    },
+}
+
 TOOL_SCHEMAS = [
     {
         "type": "function",
@@ -67,6 +85,7 @@ TOOL_SCHEMAS = [
 ]
 
 _HANDLERS = {
+    "skill": skill_tool,
     "exec": exec_tool,
     "read_file": read_file,
     "write_file": write_file,
@@ -95,8 +114,16 @@ def dispatch(tool_call, ctx):
     # turn teaches it nothing and a small model invents argument names constantly.
     handler = _HANDLERS.get(tool_call.name)
     if handler is None:
-        available = ", ".join(sorted(_HANDLERS))
-        return f"Unknown tool: {tool_call.name}. Available tools: {available}", False
+        # Small models routinely call a tool named after the skill they want, rather than calling
+        # `skill` with that name. Observed with Qwen3-1.7B on the first real test. Treating it as
+        # the skill call it obviously meant costs nothing and cannot do anything unsafe: loading a
+        # skill body is read-only.
+        if tool_call.name in (getattr(ctx.session, "skills", None) or {}):
+            tool_call = replace(tool_call, name="skill", arguments={"name": tool_call.name})
+            handler = _HANDLERS["skill"]
+        else:
+            available = ", ".join(sorted(_HANDLERS))
+            return f"Unknown tool: {tool_call.name}. Available tools: {available}", False
     allowed, reason = _approve(tool_call, ctx)
     if not allowed:
         # Counted as a failure so a model that keeps re-asking trips the breaker, while a model
@@ -111,3 +138,12 @@ def dispatch(tool_call, ctx):
     except Exception as exc:
         logger.exception("Tool %s crashed", tool_call.name)
         return f"{tool_call.name} failed: {exc}", False
+
+
+def tool_schemas(skills=None) -> list:
+    # Returns the schemas to advertise for this session. The `skill` tool is offered only when
+    # there is at least one skill to load: advertising a tool whose every call must fail wastes
+    # context and invites a small model to call it anyway.
+    if skills:
+        return TOOL_SCHEMAS + [SKILL_SCHEMA]
+    return TOOL_SCHEMAS

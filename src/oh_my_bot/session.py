@@ -3,6 +3,8 @@ import shutil
 import time
 from pathlib import Path
 
+from .skills import read_skill_body, skill_index
+
 logger = logging.getLogger(__name__)
 
 SYSTEM_PROMPT = """You are a helpful assistant operating on the user's computer via a Telegram bot.
@@ -14,13 +16,23 @@ continue. When you have the final answer, reply with plain text and no tool call
 Working directory for file tools: {workspace}
 """
 
+SKILLS_PROMPT = """
+
+Skills available. Each is a set of instructions for a kind of task.
+Call the `skill` tool with a name to load its full instructions before starting that task:
+
+{index}
+"""
+
 
 class Session:
-    def __init__(self, chat_id: int, store, config):
-        # Binds a chat to its active session id and the store that persists it.
+    def __init__(self, chat_id: int, store, config, skills=None):
+        # Binds a chat to its active session id, the store that persists it, and the skills
+        # discovered at startup.
         self.chat_id = chat_id
         self.store = store
         self.config = config
+        self.skills = skills or {}
         self.session_id = store.get_or_create_session(chat_id)
 
     def _workspace_path(self, session_id: str) -> Path:
@@ -34,8 +46,13 @@ class Session:
         return path
 
     def system_prompt(self) -> str:
-        # Builds the system message for this session.
-        return SYSTEM_PROMPT.format(workspace=self.workspace())
+        # Builds the system message for this session: the standing instructions plus, when any
+        # skills exist, their names and descriptions only. Bodies are loaded on demand by the
+        # `skill` tool — putting them here would defeat progressive disclosure.
+        prompt = SYSTEM_PROMPT.format(workspace=self.workspace())
+        if self.skills:
+            prompt += SKILLS_PROMPT.format(index=skill_index(self.skills))
+        return prompt
 
     def history(self) -> list:
         # Returns the full message list to send to the model: system prompt plus persisted history.
@@ -97,6 +114,27 @@ def handle_command(text: str, session: Session):
     if command == "/auto":
         session.store.set_auto_approve(session.session_id, True)
         return "Auto-approve on: commands will run without confirmation until /new."
+    if command == "/skills":
+        if not session.skills:
+            return "No skills are installed."
+        return "Available skills:\n" + skill_index(session.skills)
+    if command == "/skill":
+        parts = text.split(maxsplit=1)
+        if len(parts) < 2:
+            return "Usage: /skill <name>. Use /skills to list them."
+        name = parts[1].strip()
+        skill = session.skills.get(name)
+        if skill is None:
+            available = ", ".join(sorted(session.skills)) or "none"
+            return f"No skill named {name!r}. Available: {available}"
+        # Loaded straight into the history, bypassing the model's own choice. This is both the
+        # override for when it picks wrong and the way to tell whether its choosing works at all.
+        session.store.append_message(
+            session.session_id, "user",
+            f"Follow these instructions:\n\n{read_skill_body(skill)}\n\n"
+            f"This skill's files are in: {skill.dir}",
+        )
+        return f"Loaded the {name} skill into this conversation."
     if command == "/status":
         messages = session.store.load_messages(session.session_id)
         return (

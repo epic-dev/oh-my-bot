@@ -4,7 +4,7 @@ import time
 from .context import COMPACT_TO_FRACTION, DEFAULT_RATIO, compact, estimate_tokens, update_ratio
 from .session import handle_command
 from .telegram_client import send_message
-from .tools import TOOL_SCHEMAS, ToolContext, dispatch
+from .tools import ToolContext, dispatch, tool_schemas
 from .worker import run_llm_call
 
 logger = logging.getLogger(__name__)
@@ -44,8 +44,9 @@ def run_turn(text, session, connector, config, approvals, token) -> None:
 
         _compact_if_needed(session, config, connector, token=token)
         messages = session.history()
-        status, payload = run_llm_call(connector, messages, TOOL_SCHEMAS, config.llm_timeout_seconds)
-        _trace(session, messages, status, payload)
+        schemas = tool_schemas(session.skills)
+        status, payload = run_llm_call(connector, messages, schemas, config.llm_timeout_seconds)
+        _trace(session, messages, schemas, status, payload)
         if status != "ok":
             llm_failures += 1
             logger.error(
@@ -158,12 +159,12 @@ def _calibrate(session, config, messages, message) -> None:
         logger.exception("Failed to update the token ratio for session %s", session.session_id)
 
 
-def _trace(session, messages, status, payload) -> None:
+def _trace(session, messages, schemas, status, payload) -> None:
     # Records one raw request/response pair so a turn can be reconstructed afterwards. Failures
     # are traced too — a call that errored is often the more interesting one. Never allowed to
     # break a turn: a debugging aid that can take the bot down is worse than no debugging aid.
     try:
-        request = {"messages": messages, "tools": [s["function"]["name"] for s in TOOL_SCHEMAS]}
+        request = {"messages": messages, "tools": [s["function"]["name"] for s in schemas]}
         response = payload.raw if status == "ok" else {"status": status, "detail": str(payload)}
         session.store.append_trace(session.session_id, request, response)
     except Exception:
