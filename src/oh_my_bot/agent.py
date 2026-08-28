@@ -1,7 +1,7 @@
 import logging
 import time
 
-from .context import update_ratio
+from .context import COMPACT_TO_FRACTION, DEFAULT_RATIO, compact, estimate_tokens, update_ratio
 from .session import handle_command
 from .telegram_client import send_message
 from .tools import TOOL_SCHEMAS, ToolContext, dispatch
@@ -16,6 +16,11 @@ MAX_BACKOFF_SECONDS = 10
 def run_turn(text, session, connector, config, approvals, token) -> None:
     # Drives one user message to a final answer: model call, tool calls, repeat, under three
     # independent circuit breakers. Sends every message to the chat itself.
+    if text.strip().split()[:1] == ["/compact"]:
+        note = _compact_if_needed(session, config, connector, force=True)
+        send_message(token, session.chat_id, note or "Nothing to compact.")
+        return
+
     command_reply = handle_command(text, session)
     if command_reply is not None:
         send_message(token, session.chat_id, command_reply)
@@ -37,6 +42,7 @@ def run_turn(text, session, connector, config, approvals, token) -> None:
             )
             return
 
+        _compact_if_needed(session, config, connector, token=token)
         messages = session.history()
         status, payload = run_llm_call(connector, messages, TOOL_SCHEMAS, config.llm_timeout_seconds)
         _trace(session, messages, status, payload)
@@ -88,6 +94,58 @@ def run_turn(text, session, connector, config, approvals, token) -> None:
                 )
                 return
         iterations += 1
+
+
+def _compact_if_needed(session, config, connector, token=None, force=False):
+    # Compacts the session's history when the estimate crosses the threshold. Called before EVERY
+    # model call, including mid-loop, because a tool-heavy turn can overflow without the user
+    # sending anything. Returns a note describing what was done, or None.
+    try:
+        ratio = session.store.get_token_ratio(config.llm_model, DEFAULT_RATIO)
+        messages = session.history()
+        budget = config.llm_context_tokens * config.compact_threshold_pct // 100
+        if not force and estimate_tokens(messages, ratio) <= budget:
+            return None
+        # Compact below the trigger, not to it, so the next few turns fit without re-compacting.
+        target = max(int(budget * COMPACT_TO_FRACTION), 1)
+        summarizer = _make_summarizer(connector, config)
+        compacted, note = compact(messages, target, ratio, summarizer)
+        if note is None:
+            return None
+        session.replace_history(compacted)
+        logger.info("Compacted session %s: %s", session.session_id, note)
+        if token is not None:
+            send_message(token, session.chat_id, f"(Compacted the conversation: {note}.)")
+        return f"Compacted: {note}."
+    except Exception:
+        logger.exception("Compaction failed for session %s", session.session_id)
+        return None
+
+
+def _make_summarizer(connector, config):
+    # Builds the tier-3 summarizer: one bounded model call over the dropped span. Returns None
+    # when there is no connector to call (the tests drive the loop without one).
+    if connector is None:
+        return None
+
+    def summarize(dropped):
+        # Condenses dropped messages into a few lines the model can still reason from.
+        transcript = "\n".join(
+            f"{m.get('role')}: {(m.get('content') or '')[:500]}" for m in dropped
+        )
+        prompt = [
+            {
+                "role": "user",
+                "content": (
+                    "Summarize this conversation excerpt in at most five sentences. Keep facts, "
+                    "decisions, file names and commands; drop pleasantries.\n\n" + transcript
+                ),
+            }
+        ]
+        status, payload = run_llm_call(connector, prompt, None, config.llm_timeout_seconds)
+        return payload.content if status == "ok" else None
+
+    return summarize
 
 
 def _calibrate(session, config, messages, message) -> None:

@@ -36,6 +36,8 @@ POLL_TIMEOUT_SECONDS=30
 REASONING_TAGS=think,thinking,reasoning,thought,reflection,scratchpad
 STOP_SEQUENCES=<|im_end|>,<|endoftext|>,<|eot_id|>,<end_of_turn>
 LLM_MAX_TOKENS=2048
+LLM_CONTEXT_TOKENS=16384
+COMPACT_THRESHOLD_PCT=75
 ```
 
 ### 3. Start a local LLM server
@@ -193,6 +195,41 @@ If a reply still comes back empty with `finish_reason: length`, the model used i
 thinking. Raising `LLM_MAX_TOKENS` helps; for Qwen3 specifically, appending `/no_think` to a
 message disables thinking for that turn — in local testing the same question took 684 tokens with
 thinking and 44 without.
+
+### Context window and compaction
+
+`LLM_CONTEXT_TOKENS` must match the **model's** window, not a backend default — the two models in
+this README differ by 20x:
+
+```bash
+# Read it straight from the model's own config
+python3 -c "import json,glob;print(json.load(open(glob.glob('$HOME/.cache/huggingface/hub/models--*Qwen3-1.7B*/snapshots/*/config.json')[0]))['max_position_embeddings'])"
+```
+
+| Model | Max context |
+|---|---|
+| TinyLlama 1.1B | 2,048 |
+| Llama 3 8B / Gemma 2 | 8,192 |
+| Qwen2.5 / Mistral 7B v0.3 | 32,768 |
+| Qwen3 (all sizes) | 40,960 |
+| Llama 3.1+ / Gemma 3 4B+ | 131,072 |
+
+Don't simply set the maximum: on Apple Silicon the practical limit is KV-cache memory. For
+Qwen3-1.7B that is roughly 0.94 GB at 8k, 1.9 GB at 16k, and 4.7 GB at 40k.
+
+When the estimated prompt passes `COMPACT_THRESHOLD_PCT` of the window, the history is compacted
+in three tiers — old tool outputs are elided, then the oldest turns are dropped, then what was
+dropped is summarized back in. It compacts to below the trigger rather than exactly to it, so the
+next few turns do not each pay for another compaction.
+
+**These three settings interact.** Whatever the threshold leaves over has to hold the reply:
+
+```
+LLM_CONTEXT_TOKENS x (1 - COMPACT_THRESHOLD_PCT/100)  >=  LLM_MAX_TOKENS
+```
+
+The bot warns at startup when that is violated, because the symptom otherwise looks like a model
+problem rather than a configuration one.
 
 ### End-of-turn markers
 

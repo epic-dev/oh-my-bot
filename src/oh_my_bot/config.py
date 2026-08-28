@@ -1,7 +1,10 @@
+import logging
 import os
 from dataclasses import dataclass
 
 from dotenv import load_dotenv
+
+logger = logging.getLogger(__name__)
 
 # Chain-of-thought tags stripped from model replies unless REASONING_TAGS overrides them. The tag
 # is model-specific (<think> for Qwen3 and DeepSeek-R1, <reasoning> or <thought> elsewhere), which
@@ -69,6 +72,25 @@ def _parse_user_ids(raw: str) -> frozenset:
         raise RuntimeError(f"ALLOWED_USER_IDS must be comma-separated integers: {exc}") from exc
 
 
+def _check_token_budget(config: "Config") -> None:
+    # Warns when compaction would allow a prompt that leaves too little room for the reply.
+    # LLM_CONTEXT_TOKENS is compared against the *prompt*, so whatever the threshold leaves over
+    # has to cover generation. Violating this truncates replies mid-sentence, which looks like a
+    # model problem rather than a configuration one.
+    headroom = config.llm_context_tokens * (100 - config.compact_threshold_pct) // 100
+    if config.llm_max_tokens and headroom < config.llm_max_tokens:
+        logger.warning(
+            "LLM_CONTEXT_TOKENS=%s at COMPACT_THRESHOLD_PCT=%s%% leaves only %s tokens for a reply, "
+            "but LLM_MAX_TOKENS=%s. Replies may be truncated. Raise LLM_CONTEXT_TOKENS to at least "
+            "%s, lower LLM_MAX_TOKENS, or lower the threshold.",
+            config.llm_context_tokens,
+            config.compact_threshold_pct,
+            headroom,
+            config.llm_max_tokens,
+            config.llm_max_tokens * 100 // max(100 - config.compact_threshold_pct, 1),
+        )
+
+
 def load_config() -> Config:
     # Reads .env plus the real environment and builds a validated Config, raising if required values are missing.
     load_dotenv()
@@ -78,7 +100,7 @@ def load_config() -> Config:
     allowed = os.environ.get("ALLOWED_USER_IDS")
     if not allowed:
         raise RuntimeError("ALLOWED_USER_IDS is required but not set (check .env)")
-    return Config(
+    config = Config(
         telegram_bot_token=token,
         llm_base_url=os.environ.get("LLM_BASE_URL", "http://localhost:8080/v1"),
         llm_model=os.environ.get("LLM_MODEL", "qwen3:1.7b"),
@@ -101,3 +123,5 @@ def load_config() -> Config:
         llm_context_tokens=int(os.environ.get("LLM_CONTEXT_TOKENS", "4096")),
         compact_threshold_pct=int(os.environ.get("COMPACT_THRESHOLD_PCT", "75")),
     )
+    _check_token_budget(config)
+    return config

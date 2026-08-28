@@ -53,6 +53,15 @@ class Session:
         # Appends the result of one tool call, linked back to the call that produced it.
         self.store.append_message(self.session_id, "tool", content, tool_call_id=tool_call_id)
 
+    def replace_history(self, messages) -> None:
+        # Persists a rewritten history (used by compaction). The leading system message is the
+        # one system_prompt() generates fresh each turn, so it is stripped before storing —
+        # storing it would duplicate it on every subsequent history() call.
+        body = list(messages)
+        if body and body[0].get("role") == "system":
+            body = body[1:]
+        self.store.replace_messages(self.session_id, body)
+
     def reset(self) -> None:
         # Starts a fresh session: new context, new empty workspace, auto-approve off, patterns cleared.
         old_workspace = self._workspace_path(self.session_id)
