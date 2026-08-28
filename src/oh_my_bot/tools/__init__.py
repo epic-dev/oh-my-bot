@@ -1,6 +1,7 @@
 import logging
 
 from .base import ToolContext, ToolError
+from .exec import exec_tool
 from .files import read_file, write_file
 
 logger = logging.getLogger(__name__)
@@ -10,6 +11,24 @@ __all__ = ["TOOL_SCHEMAS", "ToolContext", "ToolError", "dispatch"]
 # OpenAI function schemas advertised to the model. exec is registered in Task 7 and skill in
 # Task 16; both append to these two structures rather than replacing them.
 TOOL_SCHEMAS = [
+    {
+        "type": "function",
+        "function": {
+            "name": "exec",
+            "description": (
+                "Run a shell command on the user's computer. The working directory does not "
+                "persist between calls: cd every time you need to. stderr is merged into the "
+                "output. Long output is truncated."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "command": {"type": "string", "description": "The shell command to run."}
+                },
+                "required": ["command"],
+            },
+        },
+    },
     {
         "type": "function",
         "function": {
@@ -48,6 +67,7 @@ TOOL_SCHEMAS = [
 ]
 
 _HANDLERS = {
+    "exec": exec_tool,
     "read_file": read_file,
     "write_file": write_file,
 }

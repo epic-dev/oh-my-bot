@@ -1049,7 +1049,7 @@ Write to `$SCRATCH/verify_exec.py` a script asserting:
 - A timeout: `run_command("sleep 30", timeout=1)` returns in under 3 seconds with `[killed after 1s timeout]`. Measure with `time.monotonic()` and assert the elapsed time — this is what proves the kill actually happened.
 - Orphan cleanup: run `"sleep 30 & sleep 30"` with `timeout=1`, then assert `pgrep -f "sleep 30"` finds nothing. This is what `start_new_session` + `killpg` buys you over `process.kill()`.
 - Truncation: `run_command("head -c 100000 /dev/zero | tr '\\0' 'a'", max_bytes=100)` returns a marked, truncated result.
-- **Env scrubbing:** `run_command("env", ...)` must not contain the literal bot token, and must not contain the string `TELEGRAM_BOT_TOKEN`. Assert both.
+- **Env scrubbing:** `run_command("env", ...)` must contain neither the literal bot token nor the string `TELEGRAM_BOT_TOKEN`; the same for `printenv` and for `echo $TELEGRAM_BOT_TOKEN`, which proves the variable is not merely hidden from a listing but genuinely absent from the shell. Scrubbing covers three sources: keys defined in `.env`, a hardcoded critical set (so it still works when `.env` cannot be found), and a name pattern for credentials exported in the shell instead.
 
 Expected: one `OK` line per case. The env-scrubbing and orphan assertions are the two that would otherwise fail silently in production.
 
@@ -1391,7 +1391,7 @@ Start the LLM server and run `uv run oh-my-bot`. From Telegram:
 - Trigger the step limit (ask for something open-ended) — confirm the "step limit" message and that a follow-up message continues from where it stopped.
 - Leave an approval unanswered past `APPROVAL_TIMEOUT_SECONDS` (set it to 30 temporarily) — confirm the timeout message and that the chat accepts new messages afterward.
 - With an approval pending in your chat, message from a second allowlisted account — confirm it gets a reply while the first is still blocked.
-- Ask it to `cat .env` — confirm no bot token appears in the output.
+- Ask it to run `env` — confirm no bot token appears. Note that `cat .env` **would** still show it: scrubbing removes secrets from the command's *environment*, and the file on disk is protected by the approval gate, not by scrubbing. If that gap bothers you, move `.env` outside the repo and point at it explicitly.
 
 - [ ] **Step 5: Commit**
 
