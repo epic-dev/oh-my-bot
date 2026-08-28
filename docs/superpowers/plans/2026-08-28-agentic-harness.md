@@ -827,7 +827,7 @@ Write to `$SCRATCH/verify_llm_client.py` a stub `HTTPServer` (same pattern as th
 
 Assert: cases 1-3 each yield exactly one `ToolCall` with `arguments == {"command": "ls"}` and a non-empty `id`; case 4 yields `tool_calls == []` and the content intact; case 5 yields `tool_calls == []` rather than raising. Also assert `usage` is carried through when present.
 
-`strip_reasoning`, its configurable tag set, and its test cases already exist from the mid-plan fix — keep them, and add one case here: a response whose content is `<think>maybe I should ls</think>` followed by a real fenced tool call must yield exactly one tool call, and a response where the *only* fenced call sits **inside** a `<think>` block must yield none. Reasoning about a command is not a decision to run it, which matters more once `exec` exists.
+`strip_reasoning`, its configurable tag set, and its test cases already exist from the mid-plan fix — keep them, including the rule that `config.py` imports nothing from the package (`DEFAULT_REASONING_TAGS` lives in `config.py`; `llm_client` takes the tags as a required argument) — and add one case here: a response whose content is `<think>maybe I should ls</think>` followed by a real fenced tool call must yield exactly one tool call, and a response where the *only* fenced call sits **inside** a `<think>` block must yield none. Reasoning about a command is not a decision to run it, which matters more once `exec` exists.
 
 Expected: one `OK` line per case. Case 2 is the one that matters most in practice — it is what Ollama actually sends.
 

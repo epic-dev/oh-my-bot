@@ -3,7 +3,10 @@ from dataclasses import dataclass
 
 from dotenv import load_dotenv
 
-from .llm_client import DEFAULT_REASONING_TAGS
+# Chain-of-thought tags stripped from model replies unless REASONING_TAGS overrides them. The tag
+# is model-specific (<think> for Qwen3 and DeepSeek-R1, <reasoning> or <thought> elsewhere), which
+# is why it is a setting and not a constant in the connector.
+DEFAULT_REASONING_TAGS = ("think", "thinking", "reasoning", "thought", "reflection", "scratchpad")
 
 
 @dataclass(frozen=True)

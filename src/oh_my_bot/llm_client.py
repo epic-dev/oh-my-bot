@@ -4,12 +4,6 @@ from functools import lru_cache
 
 import requests
 
-# Reasoning models emit their chain of thought inside a tag in the normal content field, but the
-# tag name is model-specific: Qwen3 and DeepSeek-R1 use <think>, others use <reasoning> or
-# <thought>. The set is configurable (REASONING_TAGS) so a new model is a config change, never a
-# code change — the same rule the LLM backend itself follows.
-DEFAULT_REASONING_TAGS = ("think", "thinking", "reasoning", "thought", "reflection", "scratchpad")
-
 
 @lru_cache(maxsize=8)
 def _paired_pattern(tags: tuple):
@@ -42,8 +36,10 @@ def _first_open(text: str, tags: tuple):
     return start
 
 
-def strip_reasoning(content, tags: tuple = DEFAULT_REASONING_TAGS):
-    # Removes chain-of-thought from a model reply, tolerating the three shapes it arrives in:
+def strip_reasoning(content, tags: tuple):
+    # Removes chain-of-thought from a model reply, given the tag names to strip (they are
+    # model-specific, so the caller supplies them from config rather than this module assuming a
+    # default). Tolerates the three shapes reasoning arrives in:
     # a complete <tag>...</tag> pair; a dangling close tag (the chat template pre-filled the
     # opening tag, so the reply starts mid-thought); and an unclosed opening tag (generation hit
     # the token limit inside the block). An empty tag tuple disables stripping entirely.
@@ -68,7 +64,7 @@ class LLMConnector(ABC):
 
 
 class OpenAICompatConnector(LLMConnector):
-    def __init__(self, base_url: str, model: str, reasoning_tags: tuple = DEFAULT_REASONING_TAGS):
+    def __init__(self, base_url: str, model: str, reasoning_tags: tuple):
         # Stores the backend's base URL, model name, and which reasoning tags to strip from replies.
         self.base_url = base_url
         self.model = model
