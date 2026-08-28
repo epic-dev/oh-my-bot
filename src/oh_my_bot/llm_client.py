@@ -43,6 +43,9 @@ class AssistantMessage:
     tool_calls: list = field(default_factory=list)
     usage: dict = field(default_factory=dict)
     finish_reason: Optional[str] = None
+    # The unparsed response body, carried back across the subprocess boundary so the parent can
+    # trace it. The child cannot write to the store: connections are thread-local to the parent.
+    raw: dict = field(default_factory=dict)
 
 
 @lru_cache(maxsize=8)
@@ -225,4 +228,5 @@ class OpenAICompatConnector(LLMConnector):
             tool_calls=tool_calls,
             usage=data.get("usage") or {},
             finish_reason=choice.get("finish_reason"),
+            raw=data,
         )

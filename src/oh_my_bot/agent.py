@@ -36,9 +36,9 @@ def run_turn(text, session, connector, config, approvals, token) -> None:
             )
             return
 
-        status, payload = run_llm_call(
-            connector, session.history(), TOOL_SCHEMAS, config.llm_timeout_seconds
-        )
+        messages = session.history()
+        status, payload = run_llm_call(connector, messages, TOOL_SCHEMAS, config.llm_timeout_seconds)
+        _trace(session, messages, status, payload)
         if status != "ok":
             llm_failures += 1
             logger.error(
@@ -86,6 +86,18 @@ def run_turn(text, session, connector, config, approvals, token) -> None:
                 )
                 return
         iterations += 1
+
+
+def _trace(session, messages, status, payload) -> None:
+    # Records one raw request/response pair so a turn can be reconstructed afterwards. Failures
+    # are traced too — a call that errored is often the more interesting one. Never allowed to
+    # break a turn: a debugging aid that can take the bot down is worse than no debugging aid.
+    try:
+        request = {"messages": messages, "tools": [s["function"]["name"] for s in TOOL_SCHEMAS]}
+        response = payload.raw if status == "ok" else {"status": status, "detail": str(payload)}
+        session.store.append_trace(session.session_id, request, response)
+    except Exception:
+        logger.exception("Failed to record a trace for session %s", session.session_id)
 
 
 def _send_progress(token, chat_id, tool_call, output) -> None:

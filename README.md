@@ -243,6 +243,44 @@ oh-my-bot/
 
 Each LLM call runs in its own OS process so a hung or slow request can be killed on timeout without affecting other users — it doesn't just get abandoned like a stuck thread would.
 
+## Debugging
+
+Every model request and response is recorded in the `traces` table, including calls that failed.
+When the bot does something inexplicable, this is what tells you what the model actually saw and
+actually said — rather than what the Telegram messages imply.
+
+Most recent exchanges, newest first (`failed` is non-empty when the call did not succeed):
+
+```bash
+sqlite3 oh-my-bot.db "
+SELECT t.id, s.chat_id, json_extract(t.response, '\$.status') AS failed
+FROM traces t JOIN sessions s USING (session_id) ORDER BY t.id DESC LIMIT 10;"
+```
+
+The full raw response of the last call — where you can see whether the model emitted native
+`tool_calls`, wrote a fenced block instead, or spent its whole budget inside `<think>`:
+
+```bash
+sqlite3 oh-my-bot.db "SELECT response FROM traces ORDER BY id DESC LIMIT 1;"
+```
+
+The shape of the last prompt, which is how you spot a malformed history (an orphaned `tool`
+message, or a conversation that has grown past the context window):
+
+```bash
+sqlite3 oh-my-bot.db "
+SELECT json_extract(value, '\$.role')
+FROM traces, json_each(json_extract(traces.request, '\$.messages'))
+WHERE traces.id = (SELECT MAX(id) FROM traces);"
+```
+
+Traces are never pruned automatically and they store full prompts, so the database grows with use.
+To reclaim space:
+
+```bash
+sqlite3 oh-my-bot.db "DELETE FROM traces WHERE created_at < strftime('%s','now','-7 days'); VACUUM;"
+```
+
 ## Known limitations
 
 - Conversation history is kept per chat in SQLite and survives restarts; `/new` starts a fresh session. Only allowlisted Telegram user ids (`ALLOWED_USER_IDS`) may use the bot, and only in private chats.
