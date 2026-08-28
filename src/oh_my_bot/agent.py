@@ -1,6 +1,7 @@
 import logging
 import time
 
+from .context import update_ratio
 from .session import handle_command
 from .telegram_client import send_message
 from .tools import TOOL_SCHEMAS, ToolContext, dispatch
@@ -54,6 +55,7 @@ def run_turn(text, session, connector, config, approvals, token) -> None:
             continue
         llm_failures = 0
         message = payload
+        _calibrate(session, config, messages, message)
 
         if not message.tool_calls:
             reply = message.content
@@ -86,6 +88,16 @@ def run_turn(text, session, connector, config, approvals, token) -> None:
                 )
                 return
         iterations += 1
+
+
+def _calibrate(session, config, messages, message) -> None:
+    # Folds the backend's reported prompt_tokens into the characters-per-token estimate, so
+    # compaction (Task 14) triggers on a number calibrated to the model actually loaded. Never
+    # allowed to break a turn.
+    try:
+        update_ratio(session.store, config.llm_model, messages, message.usage)
+    except Exception:
+        logger.exception("Failed to update the token ratio for session %s", session.session_id)
 
 
 def _trace(session, messages, status, payload) -> None:
