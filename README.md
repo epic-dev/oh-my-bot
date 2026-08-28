@@ -33,6 +33,7 @@ LLM_MODEL=qwen3:1.7b
 MAX_WORKERS=4
 LLM_TIMEOUT_SECONDS=60
 POLL_TIMEOUT_SECONDS=30
+REASONING_TAGS=think,thinking,reasoning,thought,reflection,scratchpad
 ```
 
 ### 3. Start a local LLM server
@@ -164,6 +165,20 @@ killall ollama
 4. Restart the bot (`Ctrl-C` then `uv run oh-my-bot`) so it picks up the new `.env` value.
 
 Browse [mlx-community on Hugging Face](https://huggingface.co/mlx-community) for other pre-converted models — quantized ones (`-4bit`, `-8bit`) run faster and use less memory.
+
+### Reasoning models
+
+Models like Qwen3 and DeepSeek-R1 return their chain of thought inline in the reply, wrapped in a
+tag. The bot strips those blocks so they reach neither the user nor the stored conversation
+history (where they would eat the context window across turns). The tag name differs by model, so
+it is configuration rather than code:
+
+```bash
+REASONING_TAGS=think,reasoning        # only strip these two
+REASONING_TAGS=                       # strip nothing
+```
+
+Set it to an empty value if you ever want to see the raw reasoning while debugging.
 
 ### Switching backends entirely (MLX ↔ Ollama ↔ vLLM)
 

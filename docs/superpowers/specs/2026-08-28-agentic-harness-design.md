@@ -79,6 +79,7 @@ Existing variables are unchanged except where noted. New ones:
 | `EXEC_MAX_OUTPUT_BYTES` | no | `8192` | Truncation cap on captured output *(open, see Q5)* |
 | `APPROVAL_TIMEOUT_SECONDS` | no | `600` | How long a pending approval waits before auto-denying |
 | `LLM_CONTEXT_TOKENS` | no | `4096` | The **server's** configured context window |
+| `REASONING_TAGS` | no | `think,thinking,reasoning,thought,reflection,scratchpad` | Tags whose contents are stripped from replies; empty disables stripping |
 | `COMPACT_THRESHOLD_PCT` | no | `75` | Percent of the window that triggers compaction *(open, see Q6)* |
 
 `MAX_WORKERS` changes meaning: it no longer bounds concurrent messages, it

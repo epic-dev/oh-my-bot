@@ -1,30 +1,62 @@
 import re
 from abc import ABC, abstractmethod
+from functools import lru_cache
 
 import requests
 
-# Reasoning models (Qwen3 among them) wrap their chain of thought in <think>...</think> inside
-# the normal content field. It is not an answer, it is often longer than the answer, and carrying
-# it forward in the history wastes the context window — so it is stripped at the source.
-_THINK_BLOCK_RE = re.compile(r"<think>.*?</think>", re.DOTALL | re.IGNORECASE)
-_OPEN_TAG = "<think>"
-_CLOSE_TAG = "</think>"
+# Reasoning models emit their chain of thought inside a tag in the normal content field, but the
+# tag name is model-specific: Qwen3 and DeepSeek-R1 use <think>, others use <reasoning> or
+# <thought>. The set is configurable (REASONING_TAGS) so a new model is a config change, never a
+# code change — the same rule the LLM backend itself follows.
+DEFAULT_REASONING_TAGS = ("think", "thinking", "reasoning", "thought", "reflection", "scratchpad")
 
 
-def strip_thinking(content):
-    # Removes chain-of-thought from a model reply, tolerating the three shapes it arrives in:
-    # a complete <think>...</think> pair, a dangling close tag (the chat template pre-filled the
-    # opening tag, so the reply starts mid-thought), and an unclosed opening tag (generation hit
-    # the token limit inside the block).
-    if not content:
-        return content
-    text = _THINK_BLOCK_RE.sub("", content)
+@lru_cache(maxsize=8)
+def _paired_pattern(tags: tuple):
+    # Builds (and caches) the regex matching a complete <tag>...</tag> pair for any configured tag.
+    alternation = "|".join(re.escape(tag) for tag in tags)
+    return re.compile(rf"<({alternation})>.*?</\1>", re.DOTALL | re.IGNORECASE)
+
+
+def _last_close(text: str, tags: tuple):
+    # Finds the end offset of the last closing tag of any configured tag, or None if there is none.
     lowered = text.lower()
-    if _CLOSE_TAG in lowered:
-        text = text[lowered.rindex(_CLOSE_TAG) + len(_CLOSE_TAG):]
-        lowered = text.lower()
-    if _OPEN_TAG in lowered:
-        text = text[: lowered.index(_OPEN_TAG)]
+    end = None
+    for tag in tags:
+        idx = lowered.rfind(f"</{tag.lower()}>")
+        if idx != -1:
+            candidate = idx + len(tag) + 3
+            if end is None or candidate > end:
+                end = candidate
+    return end
+
+
+def _first_open(text: str, tags: tuple):
+    # Finds the offset of the earliest opening tag of any configured tag, or None if there is none.
+    lowered = text.lower()
+    start = None
+    for tag in tags:
+        idx = lowered.find(f"<{tag.lower()}>")
+        if idx != -1 and (start is None or idx < start):
+            start = idx
+    return start
+
+
+def strip_reasoning(content, tags: tuple = DEFAULT_REASONING_TAGS):
+    # Removes chain-of-thought from a model reply, tolerating the three shapes it arrives in:
+    # a complete <tag>...</tag> pair; a dangling close tag (the chat template pre-filled the
+    # opening tag, so the reply starts mid-thought); and an unclosed opening tag (generation hit
+    # the token limit inside the block). An empty tag tuple disables stripping entirely.
+    if not content or not tags:
+        return content
+    tags = tuple(tags)
+    text = _paired_pattern(tags).sub("", content)
+    end = _last_close(text, tags)
+    if end is not None:
+        text = text[end:]
+    start = _first_open(text, tags)
+    if start is not None:
+        text = text[:start]
     return text.strip()
 
 
@@ -36,14 +68,16 @@ class LLMConnector(ABC):
 
 
 class OpenAICompatConnector(LLMConnector):
-    def __init__(self, base_url: str, model: str):
-        # Stores the backend's base URL and model name for later chat-completion calls.
+    def __init__(self, base_url: str, model: str, reasoning_tags: tuple = DEFAULT_REASONING_TAGS):
+        # Stores the backend's base URL, model name, and which reasoning tags to strip from replies.
         self.base_url = base_url
         self.model = model
+        self.reasoning_tags = tuple(reasoning_tags)
 
     def complete(self, messages: list[dict]) -> str:
         # POSTs messages to {base_url}/chat/completions and returns the reply text with any
-        # chain-of-thought removed.
+        # chain-of-thought removed. Backends that return reasoning in a separate field
+        # (reasoning_content) are handled for free: only `content` is ever read.
         url = f"{self.base_url}/chat/completions"
         resp = requests.post(
             url,
@@ -52,4 +86,4 @@ class OpenAICompatConnector(LLMConnector):
         )
         resp.raise_for_status()
         data = resp.json()
-        return strip_thinking(data["choices"][0]["message"]["content"])
+        return strip_reasoning(data["choices"][0]["message"]["content"], self.reasoning_tags)

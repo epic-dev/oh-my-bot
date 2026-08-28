@@ -3,6 +3,8 @@ from dataclasses import dataclass
 
 from dotenv import load_dotenv
 
+from .llm_client import DEFAULT_REASONING_TAGS
+
 
 @dataclass(frozen=True)
 class Config:
@@ -10,6 +12,7 @@ class Config:
     telegram_bot_token: str
     llm_base_url: str
     llm_model: str
+    reasoning_tags: tuple
     max_workers: int
     llm_timeout_seconds: int
     poll_timeout_seconds: int
@@ -25,6 +28,14 @@ class Config:
     approval_timeout_seconds: int
     llm_context_tokens: int
     compact_threshold_pct: int
+
+
+def _parse_reasoning_tags(raw) -> tuple:
+    # Parses the comma-separated REASONING_TAGS value into a tuple of tag names. An explicitly
+    # empty value disables reasoning stripping; an unset value keeps the built-in defaults.
+    if raw is None:
+        return DEFAULT_REASONING_TAGS
+    return tuple(tag.strip().lower() for tag in raw.split(",") if tag.strip())
 
 
 def _parse_user_ids(raw: str) -> frozenset:
@@ -51,6 +62,7 @@ def load_config() -> Config:
         telegram_bot_token=token,
         llm_base_url=os.environ.get("LLM_BASE_URL", "http://localhost:8080/v1"),
         llm_model=os.environ.get("LLM_MODEL", "qwen3:1.7b"),
+        reasoning_tags=_parse_reasoning_tags(os.environ.get("REASONING_TAGS")),
         max_workers=int(os.environ.get("MAX_WORKERS", "4")),
         llm_timeout_seconds=int(os.environ.get("LLM_TIMEOUT_SECONDS", "60")),
         poll_timeout_seconds=int(os.environ.get("POLL_TIMEOUT_SECONDS", "30")),

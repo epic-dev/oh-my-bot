@@ -30,7 +30,7 @@ def should_handle(update, allowed_user_ids) -> bool:
 def main():
     # Loads config, starts the thread pool, and long-polls Telegram forever, dispatching updates to workers.
     config = load_config()
-    connector = OpenAICompatConnector(config.llm_base_url, config.llm_model)
+    connector = OpenAICompatConnector(config.llm_base_url, config.llm_model, config.reasoning_tags)
     store = Store(config.db_path)
     store.init_schema()
     chat_locks = ChatLocks()
