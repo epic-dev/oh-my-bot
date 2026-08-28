@@ -73,6 +73,22 @@ _HANDLERS = {
 }
 
 
+# Tools that cannot run until the user confirms them. Everything else is safe unconfirmed only
+# because it is code-scoped to the session workspace (see tools/files.py).
+APPROVAL_REQUIRED = frozenset({"exec"})
+
+
+def _approve(tool_call, ctx):
+    # Obtains permission to run one gated tool call, returning (allowed, reason). Fails closed:
+    # a context with no approval registry refuses rather than running unconfirmed.
+    if tool_call.name not in APPROVAL_REQUIRED:
+        return True, ""
+    if ctx.approvals is None:
+        logger.error("No approval registry on the context; refusing to run %s", tool_call.name)
+        return False, "no approval channel is available"
+    return ctx.approvals.request(ctx, tool_call.arguments.get("command", ""))
+
+
 def dispatch(tool_call, ctx):
     # Runs one tool call and returns (output, ok); ok=False marks a failure for the breaker.
     # Every failure mode becomes a tool result the model can read and react to, because a crashed
@@ -81,6 +97,11 @@ def dispatch(tool_call, ctx):
     if handler is None:
         available = ", ".join(sorted(_HANDLERS))
         return f"Unknown tool: {tool_call.name}. Available tools: {available}", False
+    allowed, reason = _approve(tool_call, ctx)
+    if not allowed:
+        # Counted as a failure so a model that keeps re-asking trips the breaker, while a model
+        # that adapts still gets another route.
+        return f"This command was not run: {reason}.", False
     try:
         return handler(ctx, **tool_call.arguments), True
     except ToolError as exc:
