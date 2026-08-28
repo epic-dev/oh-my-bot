@@ -33,3 +33,22 @@ update spec and  project layout. All source files should be in src/ folder, not 
 ```
 
 ## Prompts to extend it as agentic harness
+
+Initial prompt:
+
+```
+let's brainstorm the idea how to extend this bot to the fully functional AI agent. This agent has to have harness and agentic loop. The loop is needed for handling model, tools responses, until the final result or model response. It should have a circuit breacker (max retries 5). The agent has to have an exec tool which can execute commands in the operating system, like cUrl or bash. The agent should have a possibility to accept skills (SKILL.md file) with the list of instructions. Constraints: chat is the one long context for now, command "/new" from the telegram user should create new chat (new context). If there is a context overflow then I need something like compacting the context. Make no decisions, just brainstrom, ask me questions
+```
+
+Plus about 10 more prompts. They were mostly about continuing each task in the implementation plan.
+
+
+```
+Total cost:            $33.45
+Total duration (API):  53m 5s
+Total duration (wall): 11h 15m 26s
+Total code changes:    2 lines added, 0 lines removed
+Usage by model:
+    claude-haiku-4-5:  2.1k input, 30 output, 0 cache read, 0 cache write ($0.0023)
+       claude-opus-5:  10.2k input, 258.3k output, 42.6m cache read, 562.0k cache write ($33.45)
+```
