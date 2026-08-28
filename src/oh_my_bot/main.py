@@ -43,7 +43,6 @@ def main():
         while True:
             try:
                 updates = get_updates(config.telegram_bot_token, offset, config.poll_timeout_seconds)
-                print(updates)
                 backoff = 1
             except Exception as exc:
                 logger.error(

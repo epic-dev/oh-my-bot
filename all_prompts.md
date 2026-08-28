@@ -31,3 +31,5 @@ let's brainstorm the spec for my new tiny app. the spec has to be specific, not 
 ```
 update spec and  project layout. All source files should be in src/ folder, not at the root level. Use best practices in Python apps structure
 ```
+
+## Prompts to extend it as agentic harness
