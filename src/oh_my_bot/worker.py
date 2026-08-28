@@ -1,31 +1,8 @@
 import logging
 import multiprocessing
 import queue
-import threading
-
-from .session import Session, handle_command
-from .telegram_client import send_message
 
 logger = logging.getLogger(__name__)
-
-_FAILURE_REPLIES = {
-    "timeout": "Sorry, that took too long. Please try again.",
-    "error": "Sorry, I couldn't reach the AI service. Please try again shortly.",
-}
-
-
-class ChatLocks:
-    def __init__(self):
-        # Holds one Lock per chat_id, created on first use, so each user's messages are serialized.
-        self._locks: dict[int, threading.Lock] = {}
-        self._registry_lock = threading.Lock()
-
-    def get(self, chat_id: int) -> threading.Lock:
-        # Returns the Lock for this chat_id, creating it the first time it's requested.
-        with self._registry_lock:
-            if chat_id not in self._locks:
-                self._locks[chat_id] = threading.Lock()
-            return self._locks[chat_id]
 
 
 def _llm_call_target(connector, messages, tools, result_queue):
@@ -59,48 +36,3 @@ def run_llm_call(connector, messages: list, tools, timeout: int):
         return "timeout", f"no response within {timeout}s"
     process.join()
     return status, payload
-
-
-def handle_update(update, config, connector, chat_locks, telegram_token, store):
-    # Processes one Telegram update end-to-end: serialize per chat, run the session turn, send the
-    # reply. The whole pipeline is guarded so no unexpected exception ever escapes this function.
-    message = update.get("message")
-    if not message or "text" not in message:
-        return
-    chat_id = None
-    try:
-        chat_id = message["chat"]["id"]
-        text = message["text"]
-        lock = chat_locks.get(chat_id)
-        with lock:
-            session = Session(chat_id, store, config)
-            command_reply = handle_command(text, session)
-            if command_reply is not None:
-                send_message(telegram_token, chat_id, command_reply)
-                return
-            session.add_user(text)
-            status, payload = run_llm_call(
-                connector, session.history(), None, config.llm_timeout_seconds
-            )
-            if status == "ok":
-                reply = payload.content
-                if not reply and payload.finish_reason == "length":
-                    # The model used its whole budget without producing an answer — for a
-                    # reasoning model, it never finished thinking. Say so, rather than the
-                    # generic empty-reply fallback, because the fix is a real one.
-                    reply = (
-                        "I ran out of room while thinking and never got to an answer. "
-                        "Try asking more specifically, or raise LLM_MAX_TOKENS."
-                    )
-            else:
-                logger.error("LLM call failed (%s): %s", status, payload)
-                reply = _FAILURE_REPLIES[status]
-            session.add_assistant(reply)
-            send_message(telegram_token, chat_id, reply)
-    except Exception:
-        logger.exception("Unexpected error handling update for chat %s", chat_id)
-        if chat_id is not None:
-            try:
-                send_message(telegram_token, chat_id, "Sorry, something went wrong. Please try again.")
-            except Exception:
-                logger.exception("Failed to send fallback error reply to chat %s", chat_id)
