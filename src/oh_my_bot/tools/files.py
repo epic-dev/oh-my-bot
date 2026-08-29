@@ -15,7 +15,13 @@ def resolve_in_workspace(workspace, path: str) -> Path:
     # check below is what catches that, so absolute paths are rejected rather than silently honored.
     target = (root / path).resolve()
     if target != root and not target.is_relative_to(root):
-        raise ToolError(f"Path is outside the workspace and was refused: {path}")
+        # Say what IS allowed, not only what is not: this message is the model's only chance to
+        # correct itself, and a small model copies whatever path shape is salient in its context.
+        raise ToolError(
+            f"Path {path!r} is outside the working directory and was refused. "
+            f"Use a plain relative path inside {root} instead, for example "
+            f"{Path(path).name or 'notes.txt'!r}. To reach files elsewhere, use the exec tool."
+        )
     return target
 
 

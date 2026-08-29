@@ -1,4 +1,6 @@
 import logging
+import threading
+from contextlib import contextmanager
 
 import requests
 
@@ -60,3 +62,60 @@ def answer_callback_query(token: str, query_id: str, text: str = "") -> None:
         resp.raise_for_status()
     except requests.RequestException as exc:
         logger.error("Failed to answer callback query: %s", _redact(token, str(exc)))
+
+
+def send_chat_action(token: str, chat_id: int, action: str = "typing") -> None:
+    # Shows the "typing..." indicator in a chat. Telegram clears it after about five seconds, so
+    # anything longer has to repeat it. Failures are swallowed: this is cosmetic.
+    url = f"https://api.telegram.org/bot{token}/sendChatAction"
+    try:
+        requests.post(url, json={"chat_id": chat_id, "action": action}, timeout=10)
+    except requests.RequestException as exc:
+        logger.debug("Chat action failed for chat %s: %s", chat_id, _redact(token, str(exc)))
+
+
+class TypingIndicator:
+    # Keeps the "typing..." indicator alive for the length of a turn, so the user gets instant
+    # feedback that their message was received rather than silence until the first tool call.
+    # Pausable, because while the bot is waiting for an approval tap it is waiting on the user,
+    # not working, and showing "typing" there would be a lie.
+    REFRESH_SECONDS = 4.0
+
+    def __init__(self, token: str, chat_id: int):
+        # Prepares an indicator for one chat; nothing is sent until start().
+        self.token = token
+        self.chat_id = chat_id
+        self._stop = threading.Event()
+        self._active = threading.Event()
+        self._thread = None
+
+    def start(self) -> None:
+        # Sends the first action immediately (that is the instant feedback) and starts refreshing.
+        if self._thread is not None:
+            return
+        self._active.set()
+        send_chat_action(self.token, self.chat_id)
+        self._thread = threading.Thread(target=self._run, daemon=True, name=f"typing-{self.chat_id}")
+        self._thread.start()
+
+    def _run(self) -> None:
+        # Re-sends the action until stopped, skipping refreshes while paused.
+        while not self._stop.wait(self.REFRESH_SECONDS):
+            if self._active.is_set():
+                send_chat_action(self.token, self.chat_id)
+
+    def stop(self) -> None:
+        # Ends the indicator. Safe to call more than once.
+        self._stop.set()
+
+    @contextmanager
+    def paused(self):
+        # Suspends the indicator for the duration of the block, e.g. while awaiting approval.
+        was_active = self._active.is_set()
+        self._active.clear()
+        try:
+            yield
+        finally:
+            if was_active:
+                self._active.set()
+                send_chat_action(self.token, self.chat_id)

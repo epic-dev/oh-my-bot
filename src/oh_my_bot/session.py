@@ -13,7 +13,12 @@ You have tools available. Use them when the task requires acting on the system;
 answer directly when it does not. After a tool returns, use its result to
 continue. When you have the final answer, reply with plain text and no tool call.
 
-Working directory for file tools: {workspace}
+Working directory: {workspace}
+
+read_file and write_file only accept paths INSIDE that directory. Always pass a
+plain relative path such as notes.txt or logs/output.txt. Never start a path
+with / or ../ — those are refused. To reach anything outside the working
+directory, use the exec tool instead.
 """
 
 SKILLS_PROMPT = """

@@ -3,7 +3,7 @@ import time
 
 from .context import COMPACT_TO_FRACTION, DEFAULT_RATIO, compact, estimate_tokens, update_ratio
 from .session import handle_command
-from .telegram_client import send_message
+from .telegram_client import TypingIndicator, send_message
 from .tools import ToolContext, dispatch, tool_schemas
 from .worker import run_llm_call
 
@@ -27,7 +27,18 @@ def run_turn(text, session, connector, config, approvals, token) -> None:
         return
 
     session.add_user(text)
-    ctx = ToolContext(session=session, config=config, approvals=approvals)
+    typing = TypingIndicator(token, session.chat_id)
+    typing.start()
+    try:
+        _run_loop(session, config, connector, approvals, token, typing)
+    finally:
+        typing.stop()
+
+
+def _run_loop(session, config, connector, approvals, token, typing) -> None:
+    # The loop proper, split out so run_turn can guarantee the typing indicator is stopped
+    # however the turn ends — answer, breaker, or exception.
+    ctx = ToolContext(session=session, config=config, approvals=approvals, typing=typing)
     iterations = 0
     llm_failures = 0
     tool_failures = 0
@@ -81,7 +92,7 @@ def run_turn(text, session, connector, config, approvals, token) -> None:
         session.add_assistant(message.content, tool_calls=[c.to_wire() for c in message.tool_calls])
         for tool_call in message.tool_calls:
             output, ok = dispatch(tool_call, ctx)
-            _send_progress(token, session.chat_id, tool_call, output)
+            _send_progress(token, session.chat_id, tool_call, output, ok)
             session.add_tool_result(tool_call.id, output)
             if ok:
                 tool_failures = 0
@@ -171,12 +182,16 @@ def _trace(session, messages, schemas, status, payload) -> None:
         logger.exception("Failed to record a trace for session %s", session.session_id)
 
 
-def _send_progress(token, chat_id, tool_call, output) -> None:
+def _send_progress(token, chat_id, tool_call, output, ok=True) -> None:
     # Posts one progress message per tool call: what was run, and a trimmed view of what came back.
+    # A failed step is marked as a step the agent is working through, not as the answer to the
+    # user's request: the loop usually recovers from one, and an unmarked error followed by a
+    # success reads like a bug.
     if tool_call.name == "exec":
         header = f"$ {tool_call.arguments.get('command', '')}"
     else:
         arguments = ", ".join(f"{k}=..." for k in tool_call.arguments)
         header = f"{tool_call.name}({arguments})"
     body = output if len(output) <= PROGRESS_RESULT_CHARS else output[:PROGRESS_RESULT_CHARS] + "\n[...]"
-    send_message(token, chat_id, f"{header}\n\n{body}")
+    marker = "⚙️" if ok else "⚠️ step failed, recovering —"
+    send_message(token, chat_id, f"{marker} {header}\n\n{body}")

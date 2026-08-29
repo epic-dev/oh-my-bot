@@ -1736,12 +1736,12 @@ security-relevant and not optional.** Run `uv run oh-my-bot` and keep an eye on 
   second allowlisted account. Expect a normal reply while the first chat is still blocked. This is
   the property the actor model exists for.
 
-- [ ] **6. `/new` resets everything.** Create a file via the bot, note the workspace path from
+- [x] **6. `/new` resets everything.** Create a file via the bot, note the workspace path from
   `/status`, run `/auto`, then `/new`. Expect: it has forgotten the conversation, `/status` shows a
   new session id and a new empty workspace, confirmations are back on, and the old workspace still
   exists on disk renamed `*.archived.*` (archived, never deleted).
 
-- [ ] **7. Restart mid-session.** Hold a conversation, `Ctrl-C` the bot, restart it, and ask a
+- [x] **7. Restart mid-session.** Hold a conversation, `Ctrl-C` the bot, restart it, and ask a
   question about something said earlier. Expect it remembered. Then trigger a command, kill the bot
   while the approval is pending, restart, and confirm the chat works normally — the abandoned turn
   should not resume or corrupt anything.
@@ -1765,3 +1765,34 @@ git commit -m "docs: document the agentic harness and record resolved decisions"
 #### Found issues
 
 1. When I asked to create a file with restricted path, the agent refuses to due path which is good. But it seems like it reties to do it again but with different path (wrong path) in a loop, and faield again, which is also good because the path is restricted. But the thing is why it didn't stop after the first run.
+
+   **Clarification from testing:** the request was plain `bot.txt` with no `../`; the model added
+   it on its own.
+
+   **Root cause (from traces 41-42).** In-context pattern contamination. The four user turns
+   immediately before were `cat .env`, `cat ../.env`, `cat ../../.env`, `cat ../../../.env` from
+   the env-scrubbing check, so the model copied the salient path shape and wrote `../bot.txt`. The
+   system prompt named the working directory but never said paths had to be inside it. The retry
+   was the loop working as designed — the refusal is fed back as a tool result so the model can
+   adapt, which it did on the next call (`bot.txt`, succeeded). Only a run of
+   `MAX_CONSECUTIVE_TOOL_FAILURES` failures aborts a turn.
+
+   **Fixed by:**
+   - System prompt now states that `read_file`/`write_file` accept only paths inside the working
+     directory, that `/` and `../` are refused, and that `exec` is the tool for anything else.
+   - The refusal now names the correction: *"Use a plain relative path inside <dir>, for example
+     'bot.txt'. To reach files elsewhere, use the exec tool."*
+   - Failed steps are marked in the chat as steps being recovered from, so an intermediate error
+     followed by a success no longer reads as a bug. **This was the actual defect** — the retry
+     behaviour was correct, its presentation was not.
+
+   Deliberately **not** done: making an escape refusal abort the turn. The evidence shows the model
+   recovering usefully from one, and aborting would turn a working interaction into a dead end.
+
+2. There is no indicator of "thinking" or similar as a instant feedback to the user that request is in prgress.
+
+   **Fixed by** `TypingIndicator` in `telegram_client.py`: a `sendChatAction: typing` goes out the
+   moment a turn starts and is refreshed every 4s (Telegram clears it after ~5s) until the turn
+   ends, in a `finally` block so a breaker or an exception cannot leave it running. It is
+   **paused while an approval is pending** — the bot is waiting on the user then, not working, and
+   showing "typing" would be a lie.

@@ -11,7 +11,9 @@ class ToolError(Exception):
 @dataclass
 class ToolContext:
     # Everything a tool handler needs: the session (for its workspace and history), the config
-    # (for limits), and the approval registry (wired in Task 8, when exec becomes gated).
+    # (for limits), the approval registry, and the typing indicator to suspend while a tool
+    # call is waiting on the user rather than working.
     session: Any
     config: Any
     approvals: Optional[Any] = None
+    typing: Optional[Any] = None

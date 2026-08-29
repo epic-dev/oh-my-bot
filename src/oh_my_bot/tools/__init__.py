@@ -105,7 +105,12 @@ def _approve(tool_call, ctx):
     if ctx.approvals is None:
         logger.error("No approval registry on the context; refusing to run %s", tool_call.name)
         return False, "no approval channel is available"
-    return ctx.approvals.request(ctx, tool_call.arguments.get("command", ""))
+    command = tool_call.arguments.get("command", "")
+    if ctx.typing is None:
+        return ctx.approvals.request(ctx, command)
+    # Waiting on a tap is not working: drop the typing indicator while the prompt is unanswered.
+    with ctx.typing.paused():
+        return ctx.approvals.request(ctx, command)
 
 
 def dispatch(tool_call, ctx):
