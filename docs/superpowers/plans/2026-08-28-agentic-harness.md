@@ -1677,9 +1677,54 @@ Replace "No conversation memory" in Known limitations with the real remaining on
 
 Replace the spec's "Open questions" section with the decisions table from this plan, plus anything you decided differently during implementation. A spec that still asks questions the code has answered is worse than no spec.
 
-- [x] **Step 3: Full manual regression**
+- [ ] **Step 3: Full manual regression**
 
-Walk the spec's Testing section end to end. The security-relevant ones are not optional: allowlist rejection, workspace escape, env scrubbing, and approval expiry.
+Requires a human, a Telegram client, and the LLM server running. Everything else in this plan was
+verified in isolation; this is the only pass that exercises the whole path. **Items 1-4 are
+security-relevant and not optional.** Run `uv run oh-my-bot` and keep an eye on its log output.
+
+- [ ] **1. Allowlist.** Message the bot from an account not in `ALLOWED_USER_IDS` (or temporarily
+  remove your own id and restart). Expect: **no reply at all**, and a `Dropping message from user
+  <id>` line in the log. Then confirm an allowlisted account still works.
+
+- [ ] **2. Approval, all five paths.** Ask for something needing a command (`what files are here?`).
+  - **Allow** → the command runs, a `$ <command>` progress message appears, then the answer.
+  - **Deny** → the model is told and either adapts or stops cleanly; nothing runs.
+  - **Always allow `ls`** → ask again; expect **no second prompt** for `ls`, but a fresh prompt for
+    a different program.
+  - **`/auto`** → commands stop prompting; **`/new`** → prompting returns.
+  - **Expiry** → set `APPROVAL_TIMEOUT_SECONDS=30`, restart, trigger a command and do not tap.
+    Expect "Approval timed out; treating it as a denial." after 30s, and the chat accepts new
+    messages afterwards. Restore the value.
+
+- [ ] **3. Workspace escape.** Ask it to write to `../../escape.txt` (be explicit; the model will
+  usually refuse on its own, so push). Expect a tool error containing "outside the workspace", and
+  verify from a shell that no such file exists above `workspaces/`.
+
+- [ ] **4. Env scrubbing.** Ask it to run `env`, approve, and confirm no bot token and no
+  `TELEGRAM_BOT_TOKEN` line appear. (`cat .env` **would** still show it — that is protected by the
+  approval gate, not by scrubbing.)
+
+- [ ] **5. Chat isolation.** Leave an approval prompt unanswered in your chat, then message from a
+  second allowlisted account. Expect a normal reply while the first chat is still blocked. This is
+  the property the actor model exists for.
+
+- [ ] **6. `/new` resets everything.** Create a file via the bot, note the workspace path from
+  `/status`, run `/auto`, then `/new`. Expect: it has forgotten the conversation, `/status` shows a
+  new session id and a new empty workspace, confirmations are back on, and the old workspace still
+  exists on disk renamed `*.archived.*` (archived, never deleted).
+
+- [ ] **7. Restart mid-session.** Hold a conversation, `Ctrl-C` the bot, restart it, and ask a
+  question about something said earlier. Expect it remembered. Then trigger a command, kill the bot
+  while the approval is pending, restart, and confirm the chat works normally — the abandoned turn
+  should not resume or corrupt anything.
+
+Also worth running once: **8. Breakers.** Stop the LLM server mid-conversation and send a message;
+expect "I couldn't reach the AI service" after `MAX_LLM_RETRIES` attempts, not a hang or a crash.
+
+If anything misbehaves, the `traces` table has the exact prompt and raw reply — see the README's
+Debugging section. Record any deviation in the spec's Decisions section rather than leaving it in
+your head.
 
 - [x] **Step 4: Commit**
 

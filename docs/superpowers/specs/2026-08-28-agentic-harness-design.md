@@ -423,23 +423,25 @@ that only appeared once real code met a real model.
 
 ## Testing (manual)
 
-- **Allowlist:** message the bot from a non-allowlisted account, confirm the
-  rejection path; confirm an allowlisted account still works.
-- **Approval:** trigger an `exec`, confirm the keyboard appears; test Allow,
-  Deny, Always-allow (then confirm the repeat does not ask), `/auto`, and
-  letting one expire.
-- **Workspace escape:** prompt the model toward
-  `write_file("../../escape.txt")`, confirm it is rejected and reported as a
-  tool error.
-- **Env scrubbing:** ask the bot to `cat .env`, confirm no bot token appears.
-- **Breakers:** each of the three, confirming the distinct message and that
-  partial work survives into the next turn.
-- **Isolation:** leave an approval pending in one chat, confirm a second
-  chat still gets replies.
-- **FIFO:** send a second message mid-turn, confirm it is answered after the
-  first turn completes, not merged into it.
-- **Compaction:** run a long tool-heavy session past the threshold, confirm
-  each tier fires in order and the conversation stays coherent.
-- **`/new`:** confirm context, workspace, and auto-approve all reset.
-- **Restart:** restart mid-session, confirm history is intact and an
-  in-flight turn is cleanly abandoned.
+Eight end-to-end checks, run against a real Telegram client with the LLM server up. The first four
+are security-relevant and not optional. The plan's Task 17 Step 3 carries the same list as a
+tracked checklist with expected outcomes.
+
+1. **Allowlist** — a non-allowlisted account gets no reply and produces a `Dropping message` log
+   line; an allowlisted one still works.
+2. **Approval** — Allow runs the command; Deny tells the model and runs nothing; Always-allow stops
+   prompting for that program but not for others; `/auto` suspends prompting and `/new` restores it;
+   an unanswered request auto-denies at `APPROVAL_TIMEOUT_SECONDS` and frees the chat.
+3. **Workspace escape** — a write to `../../escape.txt` is refused as a tool error and no such file
+   appears on disk.
+4. **Env scrubbing** — `env` shows no bot token. (`cat .env` still would; that is the approval
+   gate's job, not scrubbing's.)
+5. **Chat isolation** — a chat blocked on a pending approval does not delay a second chat.
+6. **`/new`** — context, workspace and auto-approve all reset, and the old workspace is archived
+   rather than deleted.
+7. **Restart** — history survives; a turn that was mid-approval when the process died is abandoned
+   cleanly and does not corrupt the session.
+8. **Breakers** — with the LLM server stopped, a message ends in "I couldn't reach the AI service"
+   after `MAX_LLM_RETRIES` attempts rather than hanging.
+
+When something misbehaves, the `traces` table holds the exact prompt and raw reply.
