@@ -1683,11 +1683,11 @@ Requires a human, a Telegram client, and the LLM server running. Everything else
 verified in isolation; this is the only pass that exercises the whole path. **Items 1-4 are
 security-relevant and not optional.** Run `uv run oh-my-bot` and keep an eye on its log output.
 
-- [ ] **1. Allowlist.** Message the bot from an account not in `ALLOWED_USER_IDS` (or temporarily
+- [x] **1. Allowlist.** Message the bot from an account not in `ALLOWED_USER_IDS` (or temporarily
   remove your own id and restart). Expect: **no reply at all**, and a `Dropping message from user
   <id>` line in the log. Then confirm an allowlisted account still works.
 
-- [ ] **2. Approval, all five paths.** Ask for something needing a command (`what files are here?`).
+- [x] **2. Approval, all five paths.** Ask for something needing a command (`what files are here?`).
   - **Allow** → the command runs, a `$ <command>` progress message appears, then the answer.
   - **Deny** → the model is told and either adapts or stops cleanly; nothing runs.
   - **Always allow `ls`** → ask again; expect **no second prompt** for `ls`, but a fresh prompt for
@@ -1697,13 +1697,40 @@ security-relevant and not optional.** Run `uv run oh-my-bot` and keep an eye on 
     Expect "Approval timed out; treating it as a denial." after 30s, and the chat accepts new
     messages afterwards. Restore the value.
 
-- [ ] **3. Workspace escape.** Ask it to write to `../../escape.txt` (be explicit; the model will
+- [x] **3. Workspace escape.** Ask it to write to `../../escape.txt` (be explicit; the model will
   usually refuse on its own, so push). Expect a tool error containing "outside the workspace", and
   verify from a shell that no such file exists above `workspaces/`.
 
-- [ ] **4. Env scrubbing.** Ask it to run `env`, approve, and confirm no bot token and no
-  `TELEGRAM_BOT_TOKEN` line appear. (`cat .env` **would** still show it — that is protected by the
-  approval gate, not by scrubbing.)
+- [ ] **4. Env scrubbing.**
+
+  *What this is testing.* `exec` children inherit the bot's environment, and the bot calls
+  `load_dotenv()` at startup — so without intervention every variable in `.env`, the bot token
+  included, would be readable by any command the model runs. `tools/exec.py` builds a cleaned
+  environment for each command, withholding keys from three sources: every key defined in `.env`,
+  a hardcoded critical set (so it still works if `.env` cannot be located), and anything whose
+  name matches `*_TOKEN`, `*_SECRET`, `*_PASSWORD`, `*_API_KEY`, `*_CREDENTIAL`, `*_KEY` — which
+  catches credentials exported in your shell rather than written to `.env`.
+
+  Send each of these, approve the command, and check the result:
+
+  | Ask the bot | Expected |
+  |---|---|
+  | `run: printenv HOME` | **prints your home directory** — the positive control |
+  | `run: env` | no `TELEGRAM_BOT_TOKEN` line, and the token value appears nowhere |
+  | `run: echo $TELEGRAM_BOT_TOKEN` | **empty** |
+  | `run: env \| grep -i -E 'token\|secret\|key\|password'` | nothing sensitive |
+
+  The first row is the one people skip and it is the one that makes the rest mean anything: if the
+  child had an empty environment for some unrelated reason, every other check would pass while
+  proving nothing. `printenv HOME` must succeed for the empty results to be evidence.
+
+  *What this does NOT protect.* Scrubbing removes secrets from the command's **environment**, not
+  from **disk**. `cat .env` still returns the file, and approving that command shows you the token.
+  That is by design — `exec` is unrestricted and the approval gate is the control there. Confirm
+  you understand the difference by asking for `wc -l .env` and seeing it succeed.
+
+  *If you want that gap closed*, move `.env` outside the repository and load it explicitly, so an
+  agent working in the project directory cannot reach it by accident.
 
 - [ ] **5. Chat isolation.** Leave an approval prompt unanswered in your chat, then message from a
   second allowlisted account. Expect a normal reply while the first chat is still blocked. This is
@@ -1732,3 +1759,9 @@ your head.
 git add README.md docs/
 git commit -m "docs: document the agentic harness and record resolved decisions"
 ```
+
+### Manual testing
+
+#### Found issues
+
+1. When I asked to create a file with restricted path, the agent refuses to due path which is good. But it seems like it reties to do it again but with different path (wrong path) in a loop, and faield again, which is also good because the path is restricted. But the thing is why it didn't stop after the first run.

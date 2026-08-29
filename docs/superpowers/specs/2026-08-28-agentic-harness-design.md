@@ -434,8 +434,10 @@ tracked checklist with expected outcomes.
    an unanswered request auto-denies at `APPROVAL_TIMEOUT_SECONDS` and frees the chat.
 3. **Workspace escape** — a write to `../../escape.txt` is refused as a tool error and no such file
    appears on disk.
-4. **Env scrubbing** — `env` shows no bot token. (`cat .env` still would; that is the approval
-   gate's job, not scrubbing's.)
+4. **Env scrubbing** — `printenv HOME` succeeds (the positive control, without which the rest
+   proves nothing), while `env` and `echo $TELEGRAM_BOT_TOKEN` show no token. Keys are withheld
+   from three sources: those defined in `.env`, a hardcoded critical set, and credential-shaped
+   names. (`cat .env` still returns the file; that is the approval gate's job, not scrubbing's.)
 5. **Chat isolation** — a chat blocked on a pending approval does not delay a second chat.
 6. **`/new`** — context, workspace and auto-approve all reset, and the old workspace is archived
    rather than deleted.
