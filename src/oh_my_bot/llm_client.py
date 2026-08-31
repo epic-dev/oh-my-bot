@@ -172,6 +172,29 @@ def parse_text_tool_calls(content):
 
 
 class LLMConnector(ABC):
+    """The contract a backend must satisfy.
+
+    Most backends need no subclass at all: MLX, Ollama and vLLM all speak OpenAI-compatible
+    chat-completions, so switching between them is an LLM_BASE_URL/LLM_MODEL change and
+    OpenAICompatConnector handles them unchanged. Implement this only for a backend that speaks
+    something else — llama.cpp's native server, or a vendor API.
+
+    Two requirements do not show up in the method signature and will bite an implementer who
+    misses them, because worker.run_llm_call runs every call in a fresh subprocess:
+
+    1. **Picklable.** The instance is pickled and sent to that child. Keep it to plain attributes;
+       an open socket, a thread, a lock or a file handle will fail to pickle.
+    2. **Stateless across calls.** The child mutates a *copy* and then exits, so anything written
+       to ``self`` during ``complete`` is discarded. Caches, counters and session tokens kept on
+       the instance silently do nothing. Per-call state belongs in local variables; state that
+       must persist belongs in the store.
+
+    Implementations are also expected to clean the reply before returning it — see
+    ``truncate_at_stop``, ``strip_special_tokens`` and ``strip_reasoning`` — and to parse tool
+    calls only from that cleaned content, so a call the model merely considered inside a reasoning
+    block is never executed.
+    """
+
     @abstractmethod
     def complete(self, messages: list, tools: Optional[list] = None) -> AssistantMessage:
         # Sends chat messages plus tool schemas to a backend and returns its assistant turn.

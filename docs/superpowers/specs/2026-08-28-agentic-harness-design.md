@@ -187,6 +187,13 @@ follow-up message continues from there rather than starting over.
 `complete(messages) -> str`. The return carries both `content` and
 `tool_calls`; `build_messages()` is deleted, its role taken by `session.py`.
 
+The `LLMConnector` ABC exists for a backend that does *not* speak
+OpenAI-compatible chat-completions; MLX, Ollama and vLLM all do, so they need
+no subclass. Its two real requirements are invisible in the signature and are
+documented on the class: an implementation must be **picklable** and
+**stateless across calls**, because `run_llm_call` pickles it into a fresh
+subprocess per call and the child's mutations are discarded with the child.
+
 Tool calls are read from the response's native `tool_calls` field. When
 that field is absent but the content contains a fenced tool-call block,
 the block is parsed instead. This covers both a backend that ignores the
